@@ -1,0 +1,33 @@
+.provider-panel { margin-bottom: 24px; }
+.provider-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.provider-card { cursor: pointer; display: block; padding: 20px; border: 1px solid var(--line); border-radius: 10px; background: #101217; min-width: 0; }
+.provider-card.selected { border-color: var(--gold); background: #221e15; }
+.provider-card input { accent-color: var(--gold); }
+.provider-card strong { font-size: 14px; }
+.provider-card p { font-size: 11px; margin: 6px 0 14px; }
+.provider-billing { display: block; font-size: 11px; color: var(--soft); }
+.provider-price { display: block; color: var(--gold); margin: 14px 0 5px; }
+.provider-card small { font-size: 10px; color: var(--muted); display: block; overflow-wrap: anywhere; }
+.provider-options { margin-top: 22px; }
+.provider-toggles { margin: 16px 0 12px; }
+.provider-toggles label { font-size: 11px; color: var(--soft); }
+.provider-toggles input { accent-color: var(--gold); }
+.price-summary { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 20px 0 14px; padding-top: 20px; border-top: 1px solid var(--line); }
+.price-summary strong { display: block; font-size: 25px; color: var(--gold); margin-top: 7px; }
+.price-summary p { font-size: 11px; margin-top: 5px; }
+.provider-panel a { color: var(--gold); }
+.voice-toolbar { padding: 15px 0; border-bottom: 1px solid var(--line); margin-bottom: 15px; }
+.voice-toolbar #voice-status { font-size: 11px; color: var(--muted); }
+.voice-replies { margin-top: 10px; }
+.voice-replies label { font-size: 11px; color: var(--soft); }
+.voice-replies input { accent-color: var(--gold); }
+.voice-toolbar .hint { font-size: 9px; margin-top: 10px; }
+.voice-toolbar [hidden] { display: none; }
+.job-cost { margin-top: 8px; font-size: 10px; color: var(--gold); }
+@media(max-width: 650px) {
+  .provider-grid { grid-template-columns: 1fr; }
+  .provider-card { padding: 16px; }
+  .price-summary { align-items: flex-start; flex-wrap: wrap; gap: 12px; }
+  .voice-toolbar .hint { display: block; }
+  .voice-toolbar #voice-status { width: 100%; }
+}
