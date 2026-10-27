@@ -53,8 +53,11 @@ CREATE TABLE IF NOT EXISTS reports(id INTEGER PRIMARY KEY,user_id TEXT,submissio
 CREATE TABLE IF NOT EXISTS attempts(bucket TEXT,created REAL);
 CREATE TABLE IF NOT EXISTS paid_actions(user_id TEXT,created TEXT,path TEXT);
 CREATE TABLE IF NOT EXISTS config(key TEXT PRIMARY KEY,value TEXT);
+CREATE TABLE IF NOT EXISTS account_events(id INTEGER PRIMARY KEY,actor_id TEXT,target_id TEXT,action TEXT,details TEXT,created TEXT);
+CREATE TABLE IF NOT EXISTS account_cleanup(user_id TEXT PRIMARY KEY,media TEXT NOT NULL);
 ''')
         migrate_creator_publication(c)
+    cleanup_deleted_accounts()
 
 def migrate_creator_publication(c):
     """One-time, additive upgrade; legacy public posts retain their original creator."""
@@ -172,6 +175,41 @@ def paid_gate():
         if n>=cap:abort(429,'Your daily API action limit has been reached.')
         c.execute('INSERT INTO paid_actions VALUES(?,?,?)',(user()['id'],store.now(),request.path))
 
+def cleanup_deleted_accounts():
+    """Retry committed deletion work after a restart or a temporary disk error."""
+    with db() as c:pending=c.execute('SELECT * FROM account_cleanup').fetchall()
+    for item in pending:
+        uid=item['user_id']
+        if not re.fullmatch('[a-f0-9]{32}',uid):continue
+        try:
+            directory=ROOT/'users'/uid
+            if directory.exists():shutil.rmtree(directory)
+            for name in json.loads(item['media']):
+                if Path(name).name!=name:continue
+                (MEDIA/name).unlink(missing_ok=True)
+            with db() as c:c.execute('DELETE FROM account_cleanup WHERE user_id=?',(uid,))
+        except OSError:
+            # Access is already revoked. Keep the durable cleanup record for retry.
+            continue
+
+def change_role(uid,role,actor_id=None):
+    if role not in ('creator','reviewer','admin'):abort(400,'Choose member, reviewer or administrator.')
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        if actor_id is not None:
+            actor=c.execute('SELECT role FROM users WHERE id=?',(actor_id,)).fetchone()
+            if not actor or actor['role']!='admin':abort(403,'Administrator access is required.')
+        target=c.execute('SELECT role FROM users WHERE id=?',(uid,)).fetchone()
+        if not target or target['role']=='demo':abort(404,'Account not found.')
+        if target['role']=='admin' and role!='admin' and c.execute("SELECT count(*) FROM users WHERE role='admin'").fetchone()[0]<=1:
+            abort(409,'Keep at least one administrator. Promote another account first.')
+        if target['role']==role:return
+        c.execute('UPDATE users SET role=? WHERE id=?',(role,uid))
+        c.execute('DELETE FROM sessions WHERE user_id=?',(uid,))
+        if role=='creator':c.execute("UPDATE submissions SET status='submitted',reviewer_id=NULL WHERE reviewer_id=? AND status='in_review'",(uid,))
+        c.execute('INSERT INTO account_events(actor_id,target_id,action,details,created) VALUES(?,?,?,?,?)',
+                  (actor_id or 'server-cli',uid,'role_changed',json.dumps({'from':target['role'],'to':role}),store.now()))
+
 def install(app,api):
     init()
     key=os.getenv('AIM_SECRET_KEY','').strip()
@@ -235,6 +273,7 @@ def install(app,api):
     @app.get('/login')
     @app.get('/discover')
     @app.get('/account')
+    @app.get('/account/settings')
     @app.get('/review')
     @app.get('/creators/<creator_id>')
     def portal_page(creator_id=None):
@@ -290,6 +329,57 @@ def install(app,api):
         if not 2<=len(name)<=60 or len(bio)>500:abort(400,'Use a display name of 2–60 characters and a bio up to 500 characters.')
         with db() as c:c.execute('UPDATE users SET name=?,bio=? WHERE id=?',(name,bio,user()['id']))
         return jsonify(ok=True)
+
+    @app.get('/api/account/admin/users')
+    def list_accounts():
+        if user()['role']!='admin':abort(403,'Administrator access is required.')
+        q=str(request.args.get('q','')).strip()[:100]
+        try:offset=max(0,int(request.args.get('offset',0)))
+        except ValueError:abort(400,'Invalid page.')
+        where="role!='demo' AND (instr(lower(name),lower(?))>0 OR instr(lower(email),lower(?))>0)"
+        with db() as c:
+            total=c.execute('SELECT count(*) FROM users WHERE '+where,(q,q)).fetchone()[0]
+            rows=c.execute('SELECT id,name,email,role,created FROM users WHERE '+where+' ORDER BY created,id LIMIT 25 OFFSET ?',(q,q,offset)).fetchall()
+        return jsonify(items=[dict(r) for r in rows],total=total,next_offset=offset+25 if offset+25<total else None)
+
+    @app.post('/api/account/admin/role')
+    def account_role():
+        if user()['role']!='admin':abort(403,'Administrator access is required.')
+        throttle('admin-role:'+user()['id'],15)
+        v=payload()
+        if not check_password_hash(user()['password'],str(v.get('current_password',''))):abort(403,'Your current password is incorrect.')
+        change_role(str(v.get('user_id','')),str(v.get('role','')),user()['id'])
+        return jsonify(ok=True,reauthenticate=v.get('user_id')==user()['id'])
+
+    @app.post('/api/account/delete')
+    def delete_account():
+        v=payload();uid=user()['id']
+        throttle('delete-account:'+uid,5)
+        if not check_password_hash(user()['password'],str(v.get('current_password',''))):abort(403,'Current password is incorrect.')
+        if v.get('confirmation')!='DELETE':abort(400,'Type DELETE to confirm account deletion.')
+        with api['LOCK'],db() as c:
+            c.execute('BEGIN IMMEDIATE')
+            current=c.execute('SELECT role FROM users WHERE id=?',(uid,)).fetchone()
+            if not current:abort(401,'Sign in again.')
+            if current['role']=='admin' and c.execute("SELECT count(*) FROM users WHERE role='admin'").fetchone()[0]<=1:
+                abort(409,'Promote another administrator before deleting your account.')
+            rows=c.execute('SELECT id,path,metadata FROM submissions WHERE user_id=?',(uid,)).fetchall()
+            names=set()
+            for row in rows:
+                names.add(row['path']);names.add(row['id']+'.source')
+                names.update(x['file'] for x in json.loads(row['metadata']).get('context',[]) if x.get('file'))
+                for table in ('reactions','views','reports','review_events'):
+                    c.execute('DELETE FROM '+table+' WHERE submission_id=?',(row['id'],))
+            c.execute('DELETE FROM submissions WHERE user_id=?',(uid,))
+            c.execute("UPDATE submissions SET status='submitted',reviewer_id=NULL WHERE reviewer_id=? AND status='in_review'",(uid,))
+            for table in ('sessions','projects','paid_actions','reactions','views','reports'):
+                c.execute('DELETE FROM '+table+' WHERE user_id=?',(uid,))
+            c.execute('DELETE FROM users WHERE id=?',(uid,))
+            c.execute('INSERT INTO account_cleanup VALUES(?,?)',(uid,json.dumps(sorted(names))))
+            c.execute('INSERT INTO account_events(actor_id,target_id,action,details,created) VALUES(?,?,?,?,?)',(uid,uid,'account_deleted','{}',store.now()))
+        session.clear();cleanup_deleted_accounts()
+        with db() as c:pending=bool(c.execute('SELECT 1 FROM account_cleanup WHERE user_id=?',(uid,)).fetchone())
+        return jsonify(ok=True,cleanup_pending=pending)
 
     @app.get('/api/creators/<creator_id>')
     def creator_profile(creator_id):

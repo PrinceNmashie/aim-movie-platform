@@ -25,7 +25,7 @@ def main():
         with portal.db() as c:r=c.execute('SELECT * FROM users WHERE email=?',(args.email.strip().casefold(),)).fetchone()
         if not r:raise SystemExit('Register that account in the website first.')
         if args.action=='set-role':
-            with portal.db() as c:c.execute('UPDATE users SET role=? WHERE id=?',(args.role,r['id']))
+            portal.change_role(r['id'],args.role)
             print('Account role updated.');return
         if args.action=='reset-password':
             password=getpass('New password (10–200 characters): ')
