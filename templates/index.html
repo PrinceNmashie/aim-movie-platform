@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/static/style.css">
   <link rel="stylesheet" href="/static/video.css">
   <link rel="stylesheet" href="/static/providers_voice.css">
-  <script src="/static/publication.js" defer></script>
+  <link rel="stylesheet" href="/static/engagement.css"><script src="/static/engagement.js" defer></script><script src="/static/publication.js" defer></script>
   <script src="/static/providers.js" defer></script>
   <script src="/static/voice.js" defer></script>
   <link rel="stylesheet" href="/static/platform.css">
@@ -22,10 +22,11 @@
   <header class="topbar">
     <a class="brand" href="/" data-nav="overview" aria-label="AIM.movie studio home"><span class="brand-mark">A</span><span>AIM<span class="brand-suffix">.movie</span></span></a>
     <div class="topbar-center"><span class="studio-label">CREATIVE STUDIO</span><span class="top-divider"></span><span id="project-title">Your next movie</span></div>
-    <div class="topbar-actions"><span class="save-indicator" id="save-status"><span></span>Saved locally</span><label class="model-control"><span>GPT model</span><select id="global-model" aria-label="GPT model"></select></label><button class="icon-button mobile-menu" id="menu-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button></div>
+    <div class="topbar-actions"><span class="save-indicator" id="save-status"><span></span>Saved</span><label class="model-control"><span>GPT model</span><select id="global-model" aria-label="GPT model"></select></label><button class="icon-button mobile-menu" id="menu-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button></div>
   </header>
-  <header class="platform-header"><a class="brand" href="/discover"><span class="brand-mark">A</span><span>AIM<span class="brand-suffix">.movie</span></span></a><nav id="platform-nav" aria-label="Main navigation"></nav><span class="test-label">CREATOR PLATFORM / TEST VERSION</span></header>
+  <header class="platform-header"><a class="brand" href="/discover"><span class="brand-mark">A</span><span>AIM<span class="brand-suffix">.movie</span></span></a><nav id="platform-nav" aria-label="Main navigation"></nav>{% if g.user and g.user.role == 'admin' %}<span class="test-label">CREATOR PLATFORM / TEST VERSION</span>{% endif %}</header>
   <div id="studio-tabs" style="max-width:1244px;margin:auto;padding:0 22px"></div>
+  <div id="task-status" style="max-width:1244px;margin:auto;padding:0 22px"></div>
   <div class="layout">
     <aside class="sidebar" id="sidebar" aria-label="Studio navigation">
       <a class="nav-overview" href="/" data-nav="overview"><span class="nav-icon">◫</span>My studio</a>
