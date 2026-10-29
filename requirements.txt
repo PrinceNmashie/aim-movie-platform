@@ -6,3 +6,4 @@ Pillow>=10,<13
 imageio-ffmpeg>=0.6,<1
 pypdf>=6,<7
 defusedxml>=0.7,<1
+gunicorn
