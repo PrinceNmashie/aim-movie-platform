@@ -49,6 +49,7 @@ def connect():
         c.execute('CREATE TABLE IF NOT EXISTS creative_actions (id INTEGER PRIMARY KEY AUTOINCREMENT, created TEXT, layer TEXT, description TEXT)')
         c.execute('CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, created TEXT, prompt TEXT, status TEXT, output TEXT, asset TEXT)')
         c.execute('CREATE TABLE IF NOT EXISTS studio_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+        c.execute('CREATE TABLE IF NOT EXISTS usage_ledger(id TEXT PRIMARY KEY,feature TEXT,provider TEXT,model TEXT,request_id TEXT,started TEXT,finished TEXT,status TEXT,usage TEXT)')
         yield c
         c.commit()
     except Exception:
@@ -155,7 +156,7 @@ def archive_project(label=''):
 def new_project(archive_name=''):
     backup = archive_project(archive_name)
     with connect() as c:
-        for table in ('project_state', 'chat_messages', 'creative_actions', 'jobs'):
+        for table in ('project_state', 'chat_messages', 'creative_actions', 'jobs', 'usage_ledger'):
             c.execute(f'DELETE FROM {table}')
     return backup
 

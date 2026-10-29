@@ -1,12 +1,15 @@
 """Video options and clearly labeled price estimates, separate from credentials."""
 import math
 import re
-import runpod_client
+import runway_client
+import runway_models
 
-PRICING_DATE = '2026-10-14'
+PRICING_DATE = '2026-10-28'
 WAN_MODEL = 'wan3.0-video'
 WAN_PRICING_URL = 'https://www.alibabacloud.com/help/en/model-studio/wan3-0-video'
-RUNPOD_PRICING_URL = 'https://docs.runpod.io/serverless/pricing'
+RUNWAY_PRICING_URL = 'https://docs.dev.runwayml.com/guides/pricing/'
+RUNWAY_PRICING_DATE = '2026-10-28'
+RUNWAY_CREDIT_USD = .01
 REGIONS = {
     'ap-southeast-1': 'Singapore', 'us-east-1': 'US (Virginia)',
     'ap-northeast-1': 'Japan (Tokyo)', 'eu-central-1': 'Germany (Frankfurt)',
@@ -35,13 +38,20 @@ def number(value, field, maximum, allow_blank=True):
 
 
 def defaults(saved, cfg):
-    def estimate(field, env, maximum):
-        try:
-            return number(saved.get(field, cfg(env)), field.replace('_', ' '), maximum)
-        except ValueError:
-            return None
-    return {
-        'video_provider': saved.get('video_provider') or cfg('VIDEO_PROVIDER') or 'runpod',
+    provider = saved.get('video_provider') or cfg('VIDEO_PROVIDER') or 'runway'
+    if provider == 'runpod': provider = 'runway'  # Migrate selection, never relabel historical jobs.
+    if provider not in ('runway', 'alibaba'): provider = 'runway'
+    model = saved.get('runway_model') or cfg('RUNWAY_MODEL') or 'gen4.5'
+    if model not in runway_client.MODELS: model = 'gen4.5'
+    return runway_models.normalize_settings({
+        'video_provider': provider,
+        'runway_model': model,
+        'runway_mode': saved.get('runway_mode', 'first_frame'),
+        'runway_start_slot': saved.get('runway_start_slot', 'ref_a'),
+        'runway_ratio': saved.get('runway_ratio', '1280:720'),
+        'runway_resolution': saved.get('runway_resolution', '720p'),
+        'runway_audio': saved.get('runway_audio', True),
+        'runway_seed': saved.get('runway_seed'),
         'wan_region': saved.get('wan_region') or cfg('ALIBABA_REGION') or 'ap-southeast-1',
         'wan_workspace': saved.get('wan_workspace') or cfg('ALIBABA_WORKSPACE_ID') or cfg('DASHSCOPE_WORKSPACE_ID'),
         'wan_resolution': saved.get('wan_resolution', '720P'),
@@ -49,15 +59,16 @@ def defaults(saved, cfg):
         'wan_start_slot': saved.get('wan_start_slot', 'ref_a'),
         'wan_audio': saved.get('wan_audio', True),
         'wan_prompt_extend': saved.get('wan_prompt_extend', False),
-        'runpod_gpu_rate': estimate('runpod_gpu_rate', 'RUNPOD_GPU_USD_PER_SECOND', 100),
-        'runpod_seconds_for_15s': estimate('runpod_seconds_for_15s', 'RUNPOD_SECONDS_FOR_15S', 100000),
         'speak_replies': saved.get('speak_replies', False),
-    }
+    })
 
 
 def validate_settings(values):
     result = {}
-    enums = {'video_provider': ('runpod', 'alibaba'), 'wan_region': tuple(REGIONS),
+    enums = {'video_provider': ('runway', 'alibaba'), 'wan_region': tuple(REGIONS),
+             'runway_model': runway_client.MODELS, 'runway_mode': ('first_frame', 'text'),
+             'runway_start_slot': ('ref_a', 'ref_b'), 'runway_ratio': ('',) + runway_client.RATIOS,
+             'runway_resolution': ('',) + runway_client.RESOLUTIONS,
              'wan_resolution': RESOLUTIONS, 'wan_mode': MODES, 'wan_start_slot': ('ref_a', 'ref_b')}
     for field, choices in enums.items():
         if field in values:
@@ -69,26 +80,43 @@ def validate_settings(values):
         if workspace and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]{0,62}', workspace):
             raise ValueError('Enter the workspace ID from Alibaba Model Studio, using letters, numbers, or hyphens.')
         result['wan_workspace'] = workspace
-    for field in ('wan_audio', 'wan_prompt_extend', 'speak_replies'):
+    for field in ('wan_audio', 'wan_prompt_extend', 'speak_replies', 'runway_audio'):
         if field in values:
             if not isinstance(values[field], bool):
                 raise ValueError('Use an on/off value for ' + field.replace('_', ' ') + '.')
             result[field] = values[field]
-    for field, maximum in [('runpod_gpu_rate', 100), ('runpod_seconds_for_15s', 100000)]:
-        if field in values:
-            result[field] = number(values[field], field.replace('_', ' '), maximum)
+    if 'runway_seed' in values:
+        seed = values['runway_seed']
+        if seed in ('', None): result['runway_seed'] = None
+        else:
+            n = number(seed, 'Runway seed', 4294967295, allow_blank=False)
+            if n != int(n): raise ValueError('Use a whole-number Runway seed.')
+            result['runway_seed'] = int(n)
     return result
+
+
+def limits(prefs):
+    choices = runway_models.contract(prefs)['durations'] if prefs['video_provider'] == 'runway' else list(range(2,31))
+    return {'min_duration': min(choices), 'max_duration': max(choices), 'durations': choices}
+
+
+def validate_duration(value):
+    try: duration = float(value)
+    except (ValueError, TypeError): duration = float('nan')
+    if isinstance(value, bool) or not math.isfinite(duration) or not 1 <= duration <= 30:
+        raise ValueError('Choose a supported duration from 1 to 30 seconds.')
+    return duration
 
 
 def options(values, prefs):
     settings = {**prefs, **validate_settings(values)}
-    duration = runpod_client.validate_duration(values.get('duration', 5))
-    if settings['video_provider'] == 'alibaba' and duration != int(duration):
-        raise ValueError('Wan requires a whole number of seconds, from 3 to 15.')
-    if settings['video_provider'] not in ('runpod', 'alibaba'):
-        raise ValueError('Choose Runpod or Alibaba Wan 3.0.')
-    if settings['video_provider'] == 'alibaba':
-        validate_settings({key: settings[key] for key in ('wan_region', 'wan_resolution', 'wan_mode', 'wan_start_slot')})
+    duration = validate_duration(values.get('duration', 5))
+    if settings['video_provider'] == 'runway':
+        duration = runway_client.validate(settings, values.get('duration', 5))
+    elif settings['video_provider'] == 'alibaba':
+        if duration != int(duration) or duration < 2:
+            raise ValueError('Wan requires a whole number of seconds, from 2 to 30.')
+    else: raise ValueError('Choose Runway Developer or Alibaba Wan 3.0.')
     return {**settings, 'duration': duration}
 
 
@@ -96,8 +124,10 @@ def catalog(prefs):
     return {'wan_model': WAN_MODEL, 'pricing_checked': PRICING_DATE,
             'regions': [{'id': key, 'name': name} for key, name in REGIONS.items()],
             'rates_by_region': {key: SG_RATES if key == 'ap-southeast-1' else GLOBAL_RATES for key in REGIONS},
-            'wan_pricing_url': WAN_PRICING_URL, 'runpod_pricing_url': RUNPOD_PRICING_URL,
-            'runpod_gpu_rate': prefs['runpod_gpu_rate'], 'runpod_seconds_for_15s': prefs['runpod_seconds_for_15s']}
+            'wan_pricing_url': WAN_PRICING_URL, 'runway_pricing_url': RUNWAY_PRICING_URL,
+            'runway_pricing_checked': RUNWAY_PRICING_DATE, 'runway_credit_usd': RUNWAY_CREDIT_USD,
+            'runway_models': runway_models.catalog(), 'runway_price': runway_models.price_settings(prefs),
+            'runway_ratios': list(runway_client.RATIOS)}
 
 
 def quote(settings, duration):
@@ -111,9 +141,8 @@ def quote(settings, duration):
                 'unit_rate_usd': rate, 'duration_seconds': duration, 'estimated_cost_usd': round(rate * duration, 6),
                 'region': region, 'resolution': settings['wan_resolution'], 'model': WAN_MODEL,
                 'pricing_checked': PRICING_DATE, 'source_url': WAN_PRICING_URL, 'price_type': 'published_list_price'}
-    rate, benchmark = settings['runpod_gpu_rate'], settings['runpod_seconds_for_15s']
-    compute = None if benchmark is None else benchmark * duration / 15
-    amount = None if rate is None or compute is None else round(rate * compute, 6)
-    return {'provider': provider, 'basis': 'gpu_worker_second', 'currency': 'USD', 'unit_rate_usd': rate,
-            'duration_seconds': duration, 'estimated_compute_seconds': compute, 'estimated_cost_usd': amount,
-            'source_url': RUNPOD_PRICING_URL, 'price_type': 'user_configured_compute_estimate'}
+    estimate = runway_models.quote(settings, duration)
+    return {'provider': provider, 'basis': 'generated_video_second', 'currency': 'USD',
+            **estimate, 'duration_seconds': duration,
+            'model': settings.get('runway_model'), 'pricing_checked': RUNWAY_PRICING_DATE,
+            'source_url': RUNWAY_PRICING_URL, 'price_type': 'published_list_price'}

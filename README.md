@@ -1,16 +1,88 @@
-# AIM.movie Creator Platform — non-storyboard test version
+# AIM.movie Creator Platform — non-storyboard version
 
-A runnable Flask app built from the non-storyboard Full Creative Studio. Includes whole-book import and adaptation context, private user accounts/projects, a community video feed, public creator profiles, reactions, staff review with creator-controlled publication, and a live voice conversation with MIA. Existing creative brief, character sheets, script, shot plan, Runpod/Alibaba rendering, last-frame continuation, named archives and scene assembly remain available.
+> **Current combined release: reliability and engagement (October 29, 2026).** Start with [UPDATE_AIM_COMPLETE.md](UPDATE_AIM_COMPLETE.md). It includes all prior account/Runway work plus saved background tasks, notifications, verified optional email, bookmarks/public sharing, following/search, continuity-focused planning and an admin benchmark export. Install the complete file set together. The existing instructions below describe retained provider capabilities.
 
-This is a local multi-user prototype, not a publicly deployed production platform. Public means the Discover route within the same running instance. Other people need access to the same hosted server to share a community. This package does not set up public hosting or billing.
+Updated October 28, 2026. This Flask app includes private accounts/projects, whole-book import, conversation and live voice with MIA, creative planning, video generation, last-frame continuation, named archives, scene assembly, staff review, creator-controlled publication, and a community feed. AIM.movie remains the site name.
 
-## Update an existing Creator Platform installation
+This release replaces Runpod with **Runway Developer**, exposing all 25 documented text/image video models, and keeps direct **Alibaba Wan 3.0** with 2–30-second output. It includes profile pictures and private liked videos. Operational notes, API setup, billing breakdowns and test labels are shown only to administrators. No accounts, keys, project data, or prepaid credits are bundled.
 
-Stop the old server. Extract this complete ZIP into a new folder, copy your **entire existing `data/` directory** and **`.env`** into it, and keep your custom `workflow.json` if changed. Use the new Python, static and template files together. Start `python app.py` and hard-refresh the browser. Accounts and existing work are retained; the database upgrades automatically. This is a full update, rather than the earlier two-file password fix.
+## Update your existing Render installation
 
-## Start
+Use **AIM_movie_Runway_Profile_Update.zip** for an existing hosted installation. Extract it first; GitHub needs the files inside it, not the ZIP itself. Read `UPDATE_RUNWAY_PROFILE.md` for the exact file list.
 
-Use Python 3.10 or newer, preferably 3.12. Extract into a NEW folder and keep your current app intact.
+1. Back up the entire persistent data directory, including `platform.sqlite`, user/project files, community media and the session secret. Keep your current deployment settings as well.
+2. Replace the listed Python and `static/` files. Add the new root file `runway_client.py`. Preserve the `static` folder structure when uploading through GitHub.
+3. Delete the retired root files `runpod_client.py` and `workflow.json` from the application source. Keep an offline copy of any customized old workflow for historical reference.
+4. Keep your existing `wsgi.py`, Gunicorn/hosting additions to `requirements.txt`, Render start command, persistent disk and data-path settings. Keep your real `.env`; `.env.example` is only a template.
+5. In Render → Environment, set the Runway variables below. Keep your OpenAI/Alibaba keys and existing settings. Remove old Runpod credentials, endpoint and benchmark variables.
+6. Deploy, then hard-refresh. An additive avatar column is created automatically; existing accounts, projects, reviews and reactions remain in place. Saved project provider choices override the environment default; select Runway in Produce → Render where needed.
+7. Verify sign-in, a saved video, Account → Settings, and Account → Liked videos before a short paid generation test. Profile pictures and downloaded Runway outputs use the existing persistent data disk.
+
+Removing this integration does **not** stop external Runpod resources. Stop/delete workers or Pods you no longer need in Runpod to avoid ongoing charges. Previously downloaded Runpod clips remain playable and usable for assembly/review. Unfinished old Runpod tasks cannot be refreshed through this release.
+
+No new Python packages are required. The full ZIP is also available for a clean local installation; keep your customized Render requirements when updating a hosted app.
+
+## Connect and use Runway
+
+Set these in Render Environment, or in `.env` locally:
+
+```dotenv
+RUNWAYML_API_SECRET=your_runway_developer_project_key
+VIDEO_PROVIDER=runway
+RUNWAY_MODEL=gen4.5
+AIM_ALLOW_PAID_API=1
+```
+
+Keep the key server-side. Runway Developer credits are separate from a consumer Runway subscription. The app submits one task, saves its ID, checks its status, and copies successful output into private project storage because provider download URLs expire. If copying fails, use **Check status** again before submitting another generation.
+
+### Choose a model
+
+In Produce → Render, choose Runway, then select a model. The picker changes length, size, quality, sound controls and prompt limit to fit the selected model. Gen-4 Turbo requires a starting frame; the other 24 models also offer text-only input.
+
+| Models | Supported length |
+| --- | --- |
+| Gen-4.5, Gen-4 Turbo | 2–10 seconds |
+| Veo 3.1, Veo 3.1 Fast | 4, 6 or 8 seconds |
+| Gemini Omni Flash, Omni Flash 1.1 | 3–10 seconds |
+| Kling 4.0 | 3–30 seconds |
+| Kling 3.0 Standard / Pro / 4K; Kling O3 Standard / Pro / 4K | 3–15 seconds |
+| Kling 2.5 Turbo Pro | 5 or 10 seconds |
+| Seedance 2.5 | 4–30 seconds |
+| Seedance 2.0, 2.0 Fast, 2.0 Mini | 4–15 seconds |
+| Wan 3.0, Wan 3.0 Prime (through Runway) | 2–30 seconds |
+| HappyHorse 1.0 | 3–15 seconds |
+| MiniMax H3, H3 Max | 5–15 seconds |
+| Grok Imagine 1.5, 1.5 Lite | 1–15 seconds |
+
+Contracts and prices were checked against official Runway Developer documentation on October 28, 2026. Account access/region/provider moderation may still reject a documented model. The app does not query a per-account available-model list or fall back to another paid model automatically.
+
+For Runway image mode, select Picture 1 or Picture 2 as the first frame. This workflow sends one starting image. It does not send an entire previous video, additional keyframes or multimodal reference sets. Use a composed scene frame or captured last frame. Text mode sends no images. Additional Runway editing, motion capture, image/audio generation and upscaling endpoints are outside this model picker.
+
+The prompt counter uses each model's actual limit (1,000–26,000 UTF-16 units). Some emoji count as two. Supported sound toggles are sent only to models that accept them; quality and shape controls likewise send only supported fields. Selected duration is restricted to the model's allowed choices, including Veo's discrete 4/6/8-second choices. Changing models fits the current duration to the nearest supported value and preserves the original shot plan. No automatic extra paid calls occur.
+
+### Cost display
+
+Everyone sees concise estimates and a per-second rate. Only admins see credit calculations, list-price dates/links, provider-reported usage, API setup and diagnostics. Quotes account for model, selected output quality, optional sound, first-frame surcharges, minimum charges and applicable rounding. Kling 4.0's published promotion expires automatically after November 30, 2026 UTC. Estimates are not invoices; provider/account discounts, taxes and later price changes can differ.
+
+Gen-4.5 remains listed at 12 credits/second ($0.12); Turbo at 5 ($0.05), at $0.01 per Developer credit. Other models have their own prices. Sources: https://docs.dev.runwayml.com/guides/pricing/ and https://docs.dev.runwayml.com/api/
+
+### Direct Alibaba: full 30-second output
+
+The old 15-second cap was imposed by the app. Direct `wan3.0-video` now accepts **2–30 whole seconds** for text, first-frame and image-reference modes. Shot planning, prompt compilation, render controls, estimates and continuation preserve up to 30 seconds. Direct Alibaba remains a separate service/key from Wan models billed through Runway.
+
+Wan's 30-second **output** maximum does not mean that 30 seconds of input video are accepted. Alibaba's documented reference-video total is at most 15 seconds, and input video plus output must fit within 30 seconds. This non-storyboard workflow currently sends text/images, not prior video. Source: https://www.alibabacloud.com/help/en/model-studio/wan3-video-generation-api-reference
+
+## Profile pictures and liked videos
+
+- **Account → Account settings → Profile picture:** upload, replace or remove a JPG, PNG or WebP up to 5 MB and 16 million pixels. The app center-crops to a 512×512 JPEG and strips metadata. Pictures appear on the dashboard, public creator profile and video author links. Initials are the fallback.
+- Pictures are public. Replacing/removing one invalidates its old app URL. Account deletion removes its stored picture.
+- **Account → Liked videos:** privately browse published videos you liked, load more or remove a like. Other users cannot view your collection. Unpublished/removed videos disappear from it. Public creator profiles still show only published creations.
+
+These features make no AI API calls. Storage/bandwidth use hosting resources.
+
+## Start locally
+
+Use Python 3.10 or newer, preferably 3.12. Extract into a new folder and keep your current app intact.
 
 macOS / Linux:
 
@@ -32,47 +104,37 @@ Copy-Item .env.example .env
 python app.py
 ```
 
-Open **http://127.0.0.1:8501**. You can also use `start.command` on macOS or `start.bat` on Windows. If the port is occupied, use `python app.py --port 8502`.
+Open **http://127.0.0.1:8501**. The included `start.command`/`start.bat` launchers also work. For another port, use `python app.py --port 8502`.
 
-Sign-in opens Discover. People can watch/react with the same account they later use to create; Studio creates a private project only when opened.
+For an existing local multi-user installation, stop the server, extract the full ZIP into a new folder, copy your **entire existing `data/` directory** and real `.env` into it, add the Runway settings, then start. Keep the old installation as a backup. No re-registration is needed.
 
-Register your administrator account first. The first real account receives the administrator role; later registrations are creators. No accounts or preset passwords are bundled. Subsequent users cannot choose a staff role during registration.
+The first real account receives the administrator role; later registrations are creators. Sign-in opens Discover. The same account can watch and create; opening Studio creates its private project.
 
-Paid API requests are OFF by default. You can test import, manual planning, accounts, uploads, community reactions, review and publication without API keys. To test AI features, edit `.env`, add your keys, set `AIM_ALLOW_PAID_API=1`, and restart. All users use the server owner's API balances. ChatGPT subscription usage does not pay for these API calls.
+Paid API requests default **OFF**. Accounts, avatars, likes, local book extraction, manual planning, uploaded video, review and publication can be tested without keys. All enabled API calls use the server owner's balances; no user billing, wallet or subscription system is implemented.
 
-Read **CREATOR_PLATFORM_GUIDE.md** for the updated review → creator publication walkthrough, public captions versus private notes, profile editing, book/voice costs, migration and test limits.
+## Import an older single-user project
 
-## Reuse your existing work
-
-Do not overwrite your original installation. Copy its `.env` into this new folder if you want to reuse its connections, then explicitly add `AIM_ALLOW_PAID_API=1` only when ready for paid features. This version defaults to paid calls OFF even if the old file lacks that setting.
-
-After registering, stop the app and import the OLD non-storyboard `data/` directory as a new private project:
+Only for the OLD non-storyboard single-user app, register first, stop the server, then run:
 
 ```bash
 python manage.py import-legacy --email your-email@example.com --source /absolute/path/to/old-app/data --name "My existing movie"
 ```
 
-The original directory is unchanged. The SQLite database is copied through its backup API. Images, clips and project archives are copied to that account's new project. Restart and select the project under Account. Keep a backup of both installations. Do not point this importer at the storyboard version or at another multi-user platform directory.
+This copies the source as a new private project. Do not point this importer at a multi-user platform directory or the storyboard version. Ordinary multi-user upgrades preserve the complete data directory as described above.
 
-## Optional demo feed
+## Staff and demo setup
 
-```bash
-python manage.py seed-demo
-```
-
-Creates three clearly labeled motion-graphic placeholders for testing playback, reactions and feed ranking. They are not presented as AI-generated films or measured staff evaluations. No API calls are made. Real uploads still need staff approval.
-
-## Staff accounts
-
-Register the person normally, then stop the server and run:
+Administrators can manage registered users in Account settings. Server-shell alternatives:
 
 ```bash
 python manage.py set-role --email reviewer@example.com --role reviewer
+python manage.py reset-password --email creator@example.com
+python manage.py seed-demo
 ```
 
-Roles: `creator`, `reviewer`, `admin`. Staff cannot approve their own submissions. Administrators can edit provisional rules; changes affect future submissions. Review records preserve each submission's original rule version.
+Roles are `creator`, `reviewer`, and `admin`. Password reset prompts privately. Optional demo seeding creates three labeled local motion-graphic fixtures without paid calls. Staff approval returns a submission to its original creator; only that creator can publish it. Private staff notes and public captions stay separate. At least one administrator must remain.
 
-## Tests
+## Verification
 
 ```bash
 python -m pip install -r requirements-dev.txt
@@ -81,18 +143,10 @@ python tests/export_ui_fixture.py /tmp/aim-ui.json
 node tests/frontend_contracts.mjs /tmp/aim-ui.json
 ```
 
-Node is needed only for the front-end contract checks, not for running the app. Tests use isolated directories and mocked provider APIs. They do not spend generation credits. See VERIFICATION.md for exactly what was checked.
+Node is needed only for frontend contract checks. APIs are mocked; video tests use local ffmpeg. See `VERIFICATION.md` for coverage/limits and `CREATOR_PLATFORM_GUIDE.md` for the complete workflow. This source update does not deploy your Render service or validate live API charges.
 
-## Password compatibility fix
+## Local Runway troubleshooting
 
-This revision explicitly uses PBKDF2-HMAC-SHA256 with 1,000,000 iterations for new passwords, password changes, local password resets and demo seeding. It fixes `module 'hashlib' has no attribute 'scrypt'` on Python installations without scrypt support. Passwords remain salted and hashed. Existing hashes are still checked using their stored method.
+Running at localhost:8501 is supported; the app sends a selected local image as encoded image data, not a localhost URL. If Runway rejects a request, the administrator now sees the returned validation field/reason, safe model/length/size settings and request ID when available. The same bounded, redacted diagnostic appears in the server terminal. Member messages stay concise. Keys, full prompts, image data and signed URLs are omitted. No automatic generation retry is added.
 
-The password compatibility fix remains included in this full update. No database deletion or Python installation change is required. Follow the full Creator Platform update instructions above. If a previously imported account uses scrypt on an installation without scrypt support, use `python manage.py reset-password --email your-email@example.com` to set a compatible new password without deleting the account or its projects.
-
-## MIA and creator publication update
-
-AIM.movie is still the platform name. MIA is the assistant name in chat, voice and AI loading states. Enter sends chat; Shift+Enter inserts a line.
-
-Staff approval returns a video to its original creator, ready to publish. The creator previews the public post and confirms Publish. Account and Share show the source project, creator and reviewer separately. Review notes stay private; public captions are separate. Discover names/avatars link to public profiles. Caption revisions can reuse the approved video, but must go through review before creator publication.
-
-For this full update, use the new code, templates and static files together. Stop the server, extract this ZIP into a new folder, copy the entire existing `data/` directory and `.env` into it, and preserve any custom workflow.json. Start `python app.py` and hard-refresh the browser. The platform database upgrades automatically, retaining accounts and existing published posts under their original creator. A pre-upgrade database backup is created for an existing installation. Do not replace this update with only the two password-fix files.
+The Developer portal also shows failed requests under Manage → Request History. Check its response and credit balance before trying again. A test run with an empty balance does not establish that a model's input settings are wrong. Error reporting itself makes no extra provider requests.

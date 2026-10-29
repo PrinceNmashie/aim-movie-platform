@@ -37,8 +37,8 @@ def image_data(blob):
 
 def build_request(prompt, settings, images):
     duration = settings['duration']
-    if duration != int(duration) or not 3 <= duration <= 15:
-        raise ValueError('Wan requires a whole number of seconds, from 3 to 15.')
+    if isinstance(duration, bool) or duration != int(duration) or not 2 <= duration <= 30:
+        raise ValueError('Wan requires a whole number of seconds, from 2 to 30.')
     if not str(prompt).strip() or len(prompt) > 20000:
         raise ValueError('Use a video prompt between 1 and 20,000 characters for Wan.')
     mode = settings['wan_mode']

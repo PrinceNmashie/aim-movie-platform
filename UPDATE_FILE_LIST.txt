@@ -1,0 +1,42 @@
+AIM.movie combined update — install the entire set together.
+Keep your .env, persistent data, wsgi.py and deployment additions.
+
+.env.example
+ai_layers.py
+app.py
+background_tasks.py
+book_source.py
+creator_portal.py
+live_voice.py
+manage.py
+notifications.py
+requirements.txt
+runway_client.py
+runway_models.json
+runway_models.py
+start.bat
+start.command
+static/app.js
+static/engagement.css
+static/engagement.js
+static/favicon.svg
+static/platform.css
+static/platform.js
+static/portal.js
+static/portal_extras.js
+static/providers.js
+static/providers_voice.css
+static/publication.js
+static/style.css
+static/video.css
+static/voice.js
+store.py
+studio.py
+templates/index.html
+templates/portal.html
+usage_ledger.py
+video_providers.py
+video_tools.py
+wan_client.py
+
+Included guides: UPDATE_AIM_COMPLETE.md, UPDATE_RUNWAY_PROFILE.md, VERIFICATION.md.

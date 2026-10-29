@@ -5,12 +5,46 @@ import json
 import re
 import uuid
 import store
+import runway_models
+import math
 
 STAGES = ['vision', 'characters', 'script', 'director']
 CHAR_FIELDS = ['name', 'role', 'age', 'appearance', 'wardrobe', 'personality', 'backstory', 'identity_constraints', 'reference_image_prompt']
 
 def fingerprint(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+def planning_policy(vision,script,durations):
+    choices=sorted(set(int(x) for x in durations));maximum=max(choices)
+    try:target=float(vision.get('duration_seconds') or 30)
+    except (TypeError,ValueError):target=30
+    if not math.isfinite(target):target=30
+    target=max(choices[0],min(7200,round(target)))
+    scenes=max(1,len(script.get('scenes',[])));count=max(scenes,math.ceil(target/maximum))
+    # Distribute time rather than creating a fixed count of short action beats.
+    suggested=[];remaining=target
+    for i in range(count):
+        ideal=remaining/(count-i)
+        value=min(choices,key=lambda n:(abs(n-ideal),-n));suggested.append(value);remaining-=value
+    return {'target_seconds':target,'maximum_clip_seconds':maximum,'suggested_clip_count':count,
+            'suggested_durations':suggested,'strategy':'Preserve scene boundaries and the requested action. Prefer fewer longer continuous takes. Split only when necessary; explain each cut. Exact target may be impossible for discrete model durations.'}
+
+def consolidate_shots(value,durations):
+    """Merge redundant adjacent beats only when their scene, cast and camera match."""
+    choices=sorted(set(int(n) for n in durations));result=[]
+    for raw in value.get('shots',[]):
+        shot=dict(raw)
+        try:n=float(shot.get('duration_seconds',choices[0]))
+        except (TypeError,ValueError):n=choices[0]
+        if not math.isfinite(n):n=choices[0]
+        shot['duration_seconds']=min(choices,key=lambda v:(abs(v-n),-v))
+        previous=result[-1] if result else None
+        if previous and not shot.get('cut_reason','').strip() and previous.get('scene_id')==shot.get('scene_id') and previous.get('camera','')==shot.get('camera','') and set(previous.get('characters',[]))==set(shot.get('characters',[])) and previous['duration_seconds']+shot['duration_seconds'] in choices:
+            previous['duration_seconds']+=shot['duration_seconds']
+            for f in ('on_screen_action','continuity','sound','prompt'):
+                previous[f]=' '.join(str(x).strip() for x in (previous.get(f,''),shot.get(f,'')) if x)
+        else:result.append(shot)
+    return {**value,'shots':result}
 
 def workspace_id():
     current = store.get('workspace_id')
@@ -116,6 +150,20 @@ def compile_shot(shot, vision, characters, video_settings=None):
     wanted = {str(x).casefold() for x in shot.get('characters', [])}
     cast = [c for c in characters.get('characters', []) if not wanted or c['id'].casefold() in wanted or c['name'].casefold() in wanted]
     identities = '\n'.join(f'{c["name"]}: {c.get("appearance", "")}. Wardrobe: {c.get("wardrobe", "")}. Identity constraints: {c.get("identity_constraints", "")}' for c in cast)
+    if (video_settings or {}).get('video_provider') == 'runway':
+        # Fit the selected model's prompt budget.
+        limit = runway_models.contract(video_settings)['prompt_max']
+        def brief(value, length):
+            return str(value or '').encode('utf-16-le')[:length*2].decode('utf-16-le', errors='ignore').strip()
+        start = 'Begin from the supplied first frame; preserve its visible cast and setting.' if video_settings.get('runway_mode') == 'first_frame' else 'One continuous cinematic shot.'
+        lines = [start, 'Action: ' + brief(shot.get('on_screen_action'), 300),
+                 'Camera: ' + brief(shot.get('camera'), 100),
+                 'Continuity: ' + brief(shot.get('continuity'), 140),
+                 'Style: ' + brief(vision.get('visual_style'), 80),
+                 'Cast: ' + brief('; '.join(c['name']+': '+brief(c.get('appearance'),35)+', '+brief(c.get('wardrobe'),20) for c in cast), 110),
+                 'Direction: ' + brief(shot.get('prompt'), 80),
+                 'No identity swaps, morphing or unexpected cuts.']
+        return brief('\n'.join(lines), limit)
     bindings = store.get('reference_bindings', {})
     reference_lines = []
     settings = video_settings or {}
@@ -157,4 +205,5 @@ def compile_continuation(action, vision, characters, video_settings=None):
             'camera': 'Continue the camera angle and framing shown in the final-frame reference.',
             'continuity': 'Continue immediately after the supplied moment. Preserve cast identities, screen positions, clothing, lighting and weather. Advance the action without replaying the previous segment.',
             'prompt': ''}
-    return compile_shot(shot, vision, characters, video_settings) + '\nContinue into the next moment. The new action is:\n' + action
+    prompt = compile_shot(shot, vision, characters, video_settings)
+    return prompt if (video_settings or {}).get('video_provider') == 'runway' else prompt + '\nContinue into the next moment. The new action is:\n' + action

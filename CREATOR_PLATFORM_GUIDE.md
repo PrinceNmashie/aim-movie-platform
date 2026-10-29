@@ -1,6 +1,10 @@
 # AIM.movie Creator Platform: test guide and costs
 
-Version: October 26, 2026. Built from the non-storyboard Full Creative Studio. Updated with MIA, creator-controlled publication and public profiles.
+Current reliability, engagement, queue recovery, notification/email, sponsor-log and installation instructions are in [UPDATE_AIM_COMPLETE.md](UPDATE_AIM_COMPLETE.md). Those instructions supersede earlier descriptions of browser-owned polling or synchronous long operations.
+
+Version: October 28, 2026. Built from the non-storyboard Full Creative Studio. Includes MIA, creator-controlled publication, the full Runway text/image model picker, 30-second Wan output, profile pictures and private liked videos. API setup, billing breakdowns, diagnostic notes and test labels are admin-only.
+
+For this release, follow **UPDATE_RUNWAY_PROFILE.md** or the current README update steps. This is a complete provider/profile update; earlier four-file update instructions do not cover it. Preserve your entire persistent data directory and hosted deployment settings.
 
 ## What is included
 
@@ -9,8 +13,9 @@ Version: October 26, 2026. Built from the non-storyboard Full Creative Studio. U
 - Whole-book upload from TXT, Markdown, EPUB, DOCX and text-based PDF.
 - Local extraction into source-linked excerpts, full-excerpt reading, an analysis estimate, resumable AI analysis, usage recording, a manually editable or AI-synthesized story bible, and selection of excerpts to adapt.
 - Source context passed to the conversation, creative brief, character drafting, script and shot planning. Generated scripts are asked to retain source locators and adaptation changes.
-- Existing non-storyboard rendering and scene assembly, including 3–15-second clip generation and last-frame continuation.
+- Non-storyboard rendering and scene assembly: 25 Runway text/image video models with model-specific length/quality/sound/prompt controls, direct Alibaba Wan 3.0 at 2–30 seconds, and last-frame continuation. Runpod has been retired.
 - A public-within-the-instance Discover feed, For you/Latest tabs, playback, a unique like toggle per account, distinct signed-in viewer counts, reports, clickable creator names and public profiles with editable display names and bios. Profiles list only published creations.
+- Public profile pictures, edited in Account settings, and an authenticated, private Liked videos collection with pagination.
 - Submissions from completed local/cached renders, assemblies, or uploaded MP4/MOV/WebM videos. Submissions stay private after approval until their creator previews and publishes them.
 - A staff queue, exclusive claims, four provisional review checks, approval/change request/rejection, feedback, preserved review history, revision links, and revocation/removal of approved or published posts. Staff approval returns a creation to its owner and does not publish it. Creators can withdraw their own submissions.
 - For assembled submissions, immutable copies of constituent clips for adjacent-shot review, up to the existing 40-clip assembly limit.
@@ -91,7 +96,21 @@ Microphone access requires localhost or HTTPS. Headphones reduce echo. Sessions 
 
 ### Video and art
 
-Video generation, character reference art and later retries remain separate charges. Runpod uses GPU worker time; Alibaba uses its configured video generation pricing. Compare the estimates in Render. Never interpret a book-analysis estimate as the cost of producing the movie.
+Video generation, character reference art and later retries remain separate charges. Runway Developer uses credits per second of generated video; Alibaba retains its configured pricing. Compare estimates in Render. Never interpret a book-analysis estimate as the cost of producing the movie.
+
+Runway Developer now exposes all 25 models documented for the text/image-to-video endpoints: Gen-4.5 and Gen-4 Turbo; Veo 3.1/Fast; Gemini Omni Flash/1.1; Kling 4.0, Kling 3.0 Standard/Pro/4K, Kling O3 Standard/Pro/4K and Kling 2.5 Turbo Pro; Seedance 2.5, 2.0/Fast/Mini; Wan 3.0/Prime; HappyHorse 1.0; MiniMax H3/H3 Max; Grok Imagine 1.5/Lite. The README includes a duration table. Gen-4 Turbo is image-only; other models have text-only and first-frame options.
+
+In Render, choose a service and model. Output size, quality, sound toggles, clip-length choices and prompt count adapt to its official contract. The native Gen-4 models still support 2–10 seconds, Veo uses exactly 4/6/8 seconds, and the Runway Wan models support 2–30 seconds. The 1,000-unit prompt cap is no longer applied to every model: selected limits range up to 26,000 UTF-16 units. There is no automatic paid fallback or automatic splitting. A planned length outside the chosen model's supported values is fitted to the nearest supported render length while preserving the plan.
+
+Image mode sends only the explicitly selected Picture 1 or Picture 2 as a first frame. Use a composed scene frame or a captured final frame. Text mode sends no images. This update exposes model choice for the existing text/first-frame workflow; it does not add every model's extra video-edit, multimodal reference, end-frame, image, audio or upscaling endpoint. A character sheet can still appear as a sheet when used as a starting frame. Output shape can crop the input.
+
+Direct Alibaba's old 15-second cap was in the app. `wan3.0-video` now supports **2–30 whole seconds** in the implemented text, first-frame and image-reference modes. Shot plans, render controls, compiled durations, price estimates and continuation accept the extended range. The documented input-video limit is different: at most 15 seconds of reference video and no more than 30 seconds combined input/output. This workflow does not send previous video.
+
+All users see concise estimated costs and per-second prices. Admins also see calculation details, published-rate dates/sources, returned task credit usage, API setup/connection diagnostics and operational notes. Guests, members and reviewers do not receive the raw generation summary/usage fields in their Studio snapshots. Removing operational wording does not remove validation, private/public labels or essential action instructions.
+
+Quotes include the chosen model and quality, optional sound rates, any first-frame surcharge, model minimums and credit rounding. Prices were checked October 28, 2026. Native Gen-4.5 is 12 credits/second ($0.12 at $0.01/credit); Turbo is 5 ($0.05). Kling 4.0's published 20% promotion and rounding are included through November 30, 2026 UTC, then list-price estimates resume automatically. Consumer Runway subscriptions are separate from Developer credits. Actual account charges still require a dashboard check; the app does not sell credits or track user payments.
+
+Runway task IDs are saved before polling. Successful output is downloaded into private project storage because provider URLs expire. Check status retries a download for the same task without starting another generation. If initial submission times out, check task history before retrying. Old downloaded Runpod videos remain usable; unfinished Runpod tasks are not polled or migrated, and retiring code does not stop external Pods/workers.
 
 There is no user payment system, wallet, subscription billing or charge allocation. All requests use the owner-supplied server keys. Paid calls default OFF. `AIM_DAILY_PAID_ACTIONS=250` limits paid-start attempts per account/day; it counts starts, not dollars or voice turns. Configure external provider spend limits as appropriate for a shared test.
 
@@ -132,6 +151,14 @@ The four implemented checks are proposed placeholders: identity; continuity/acti
 
 An assembled submission includes copied constituent videos for staff to compare sequence context. A reviewer claims one item, records timecoded feedback, and either approves, requests local changes or rejects. The creator can send a new version linked to the old record. After staff approval, only the creator can publish it, with ownership still tied to the original account and project. Current review claims do not expire automatically; coordinate staff handoffs in this test version.
 
+## Moving from clips and assembly to review
+
+Completed clips in Produce → Clips and playable scenes under Produce → Assemble each have a **Send for review** button beside the video. After Combine & export, the page scrolls to the new scene and its next action. Select Send for review to open Share with that exact saved output selected, a video preview, a suggested title and clip/scene type. Add private notes, an optional public caption/tags, confirm sharing permission and submit. You do not need to download and upload the video again. On success, the page moves to the submission status list.
+
+You can still choose a saved clip or assembly manually in Share, or upload a downloaded video. JSON requests, ordinary form fields and multipart browser forms are accepted; a browser form containing a saved video ID does not need an uploaded file. Choose one source at a time. Source selection is scoped to the current account/project; stale workspace submissions are rejected.
+
+The earlier saved-output review fix remains included: saved clips and assemblies can be submitted without downloading and uploading again. Install this release using the full provider/profile update instructions rather than only the earlier four review-fix files. Preserve the entire data directory and real environment settings, restart, and hard-refresh.
+
 ## Chat, captions and public profiles
 
 In the conversation layer, **Enter sends** and **Shift+Enter inserts a new line**. Input-method composition is respected, so choosing characters in an IME does not accidentally submit a message. This applies only to the chat composer, not other text fields.
@@ -145,13 +172,21 @@ Submission fields are separate:
 
 From Account or Share, **Edit public caption** creates a new review version using the same immutable video, without re-uploading or generating it. The existing post remains public until the new caption is approved and its creator publishes the replacement. Changing an approved caption directly during Publish is blocked. To hide an old caption immediately, unpublish the current post first.
 
-Clicking a creator's name/avatar on Discover opens their public profile. Profiles show the display name, optional bio, published-video count, likes, and published creations. Email, account role, private projects, staff notes, drafts and approved-but-unpublished videos are excluded. Account includes an editor for your own public name/bio. Public profile URLs use stable account IDs, so changing the display name does not break them.
+Clicking a creator's name/avatar on Discover opens their public profile. Profiles show the picture or initials, display name, optional bio, published-video count, likes received, and published creations. Email, account role, private projects, staff notes, drafts and approved-but-unpublished videos are excluded. Account settings includes your own public name/bio and picture editors. Public profile URLs use stable account IDs, so changing the display name does not break them.
+
+### Profile pictures
+
+Open Account → Account settings → Profile picture. Choose a still JPG, PNG or WebP, review its preview, then upload. The maximum is 5 MB and 16 million pixels. The server decodes, rotates for EXIF orientation, center-crops to a square, and stores a 512×512 JPEG without source metadata. Select Remove picture to return to initials. Replacement/removal invalidates the old app URL. The picture is public on account/profile/feed author links and is removed with the account's active files on deletion. There is no AI processing charge.
+
+### Liked videos
+
+Open Account → Liked videos. This collection belongs only to your signed-in account; there is no public liked-history page. Published videos appear with the newest likes first, 12 at a time with Load more. Unliking removes an item. Unpublished, withdrawn, revoked or deleted posts are omitted even if an older reaction exists. Re-publication of the same post can make an existing like visible again. The collection does not use Discover's 500-post candidate limit. It does not create a Studio project for viewers.
 
 ## Administration and migration
 
-Use a separate extracted folder. Existing single-user `data/` is not automatically shared with all accounts. After registration, import it as a new private project using the README command. The old source directory remains intact. For this update and future updates to this multi-user version, preserve the **entire** existing `data/` directory, including `platform.sqlite`, account/project directories, community media and session secret, plus your `.env` and workflow changes.
+Use a separate extracted folder for a local full update. Existing single-user `data/` is not automatically shared with all accounts. After registration, import it as a new private project using the README command. The old source directory remains intact. For multi-user updates, preserve the **entire** existing `data/` directory, including `platform.sqlite`, account/project directories, community media and session secret, plus your real environment and hosted deployment settings.
 
-To install this MIA/publication update, stop the server, extract the new ZIP into a separate folder, copy your existing entire `data/` and `.env` into the new app folder, and keep your custom workflow.json if changed. Install requirements if needed and start `python app.py`. Do not copy the old Python/static/template files over the new version. Refresh or hard-reload the browser so its JavaScript matches the upgraded server.
+To install locally, stop the server, extract the new full ZIP into a separate folder, copy your existing entire `data/` and `.env` into it, and add the Runway settings. Install requirements if needed and start `python app.py`. The retired ComfyUI workflow is no longer used. On Render use the incremental patch; retain your existing wsgi.py, hosting dependencies, persistent disk, start command and environment. Hard-refresh so the JavaScript matches the server. See UPDATE_RUNWAY_PROFILE.md for exact files and retirement steps.
 
 The first startup adds fields to the platform database. Existing accounts, password hashes, projects, original creator IDs, review history and reactions are retained. Previously published legacy posts stay published under their original creator and retain the caption that was already public; new private staff notes are never automatically promoted into a caption. A pre-upgrade platform database backup is saved as `data/platform_before_creator_publish_v2.sqlite` when upgrading an installation containing accounts. Preserve your own full-folder backup as well. No account re-registration or database deletion is needed. The PBKDF2 compatibility fix remains included.
 
@@ -182,4 +217,29 @@ For you currently ranks up to 500 approved posts using liked tags, reaction coun
 - OpenAI API pricing, including transcription: https://developers.openai.com/api/docs/pricing
 - WebRTC server-authenticated session setup: https://developers.openai.com/api/docs/guides/realtime-webrtc
 - Realtime transcript events and interruption/truncation: https://developers.openai.com/api/docs/guides/realtime-conversations
+- Runway Developer API: https://docs.dev.runwayml.com/api/
+- Runway Developer pricing: https://docs.dev.runwayml.com/guides/pricing/
+- Runway input assets: https://docs.dev.runwayml.com/assets/inputs/
+- Runway output expiry/storage: https://docs.dev.runwayml.com/assets/outputs/
 - Project reference: user-supplied IT492_Assignment8.pptx, slides 19 and 21, inspected October 26, 2026.
+
+
+## Account settings and staff administration update
+
+Open Account → Account settings. Public profile editing and password changes are grouped here; the dashboard focuses on projects and creations. Security changes revoke other sessions.
+
+An administrator sees Manage user accounts inside Settings. Ask the person to register normally first; search by name/email, choose Member, Reviewer or Administrator, then confirm using YOUR current password. Role changes are recorded in a server audit table and revoke the affected account's sessions. Demotion to Member releases unfinished review claims. Other users cannot access this directory or role endpoint; private project contents and passwords are not exposed. The directory returns 25 accounts per page. At least one administrator must remain, including when using manage.py.
+
+Server-shell alternative (the person must already be registered):
+
+    python manage.py set-role --email person@example.com --role admin
+
+Use --role reviewer for staff reviewers or --role creator for ordinary members. Server-shell access is administrative authority; it does not require a website administrator's password. The CLI records its actor as server-cli.
+
+Delete account is a collapsed section in Settings. It requires the current password, typing DELETE, and a final browser confirmation. Export/download anything needed first. This removes the account, sessions, projects, source books, project media, owned submissions/public posts and related reactions/views/reports. Staff history on OTHER creators' submissions and limited role/deletion audit records remain under the internal account ID. Backup copies remain until the operator rotates them. Stop active external generation/voice before deletion: deletion does not cancel provider-side jobs or refund usage. The final administrator must promote someone else first.
+
+Deletion commits removal of access and public listings before removing files. Failed filesystem cleanup is retained in account_cleanup and retried on server restart (creator_portal.init); inspect this queue if operating the hosted beta. Do not restore an old backup without reconciling accounts deleted since that backup.
+
+The earlier account-administration update remains included. This release requires the larger provider/profile patch listed in UPDATE_RUNWAY_PROFILE.md. Keep your existing wsgi.py, requirements.txt deployment additions, non-Runpod environment variables and persistent disk. Database changes are additive; no existing account or content is reset. Hard-refresh with Command+Shift+R. No new dependencies are required. Back up persistent data before upgrading.
+
+This is basic account administration for the beta. It does not add suspensions, email verification/recovery, MFA, usage budgets, account impersonation, bulk deletion, or an admin audit-log viewer. Larger public use needs those operational decisions plus tested concurrency, background jobs and database/storage scaling.

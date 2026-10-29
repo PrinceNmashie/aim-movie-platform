@@ -1,6 +1,7 @@
 """Local multi-user prototype: private workspaces, immutable review copies and a public feed."""
 import datetime as dt
 import hashlib
+import io
 import json
 import math
 import os
@@ -12,10 +13,13 @@ import sqlite3
 import time
 import uuid
 from contextlib import contextmanager
-from flask import abort, g, jsonify, redirect, render_template, request, send_file, session
+from flask import abort, g, jsonify, redirect, render_template, request, send_file, session, has_request_context
 from werkzeug.security import generate_password_hash, check_password_hash
 import store
 import video_tools
+import notifications
+import background_tasks
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 ROOT = store.DATA
 DB = ROOT / 'platform.sqlite'
@@ -55,8 +59,14 @@ CREATE TABLE IF NOT EXISTS paid_actions(user_id TEXT,created TEXT,path TEXT);
 CREATE TABLE IF NOT EXISTS config(key TEXT PRIMARY KEY,value TEXT);
 CREATE TABLE IF NOT EXISTS account_events(id INTEGER PRIMARY KEY,actor_id TEXT,target_id TEXT,action TEXT,details TEXT,created TEXT);
 CREATE TABLE IF NOT EXISTS account_cleanup(user_id TEXT PRIMARY KEY,media TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS bookmarks(user_id TEXT,submission_id TEXT,created TEXT,PRIMARY KEY(user_id,submission_id));
+CREATE TABLE IF NOT EXISTS follows(user_id TEXT,creator_id TEXT,PRIMARY KEY(user_id,creator_id));
 ''')
+        notifications.init(c)
+        background_tasks.init(c)
         migrate_creator_publication(c)
+        if 'avatar' not in {r[1] for r in c.execute('PRAGMA table_info(users)')}:
+            c.execute("ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''")
     cleanup_deleted_accounts()
 
 def migrate_creator_publication(c):
@@ -79,10 +89,19 @@ def migrate_creator_publication(c):
 
 
 def user(): return getattr(g,'user',None)
+def is_admin(): return bool(has_request_context() and user() and user()['role']=='admin')
 def staff(): return bool(user() and user()['role'] in ('admin','reviewer'))
 def csrf():
     if 'csrf' not in session: session['csrf']=secrets.token_urlsafe(32)
     return session['csrf']
+
+def avatar_url(account):
+    name = dict(account).get('avatar', '') if account else ''
+    return '/profile-images/' + account['id'] + '/' + name if re.fullmatch(r'[a-f0-9]{32}\.jpg', name) else None
+
+def avatar_directory(uid):
+    if not re.fullmatch('[a-f0-9]{32}', uid):abort(404)
+    return ROOT / 'users' / uid / 'profile'
 def payload():
     value=request.get_json(silent=True)
     if not isinstance(value,dict): abort(400,'Send a JSON object.')
@@ -131,16 +150,18 @@ def private_access(row):return bool(user() and (row['user_id']==user()['id'] or 
 
 def serialize(row,private=False):
     with db() as c:
-        author=c.execute('SELECT name FROM users WHERE id=?',(row['user_id'],)).fetchone()
+        author=c.execute('SELECT id,name,avatar FROM users WHERE id=?',(row['user_id'],)).fetchone()
         project=c.execute('SELECT name FROM projects WHERE id=? AND user_id=?',(row['project_id'],row['user_id'])).fetchone()
         likes=c.execute('SELECT count(*) FROM reactions WHERE submission_id=?',(row['id'],)).fetchone()[0]
         seen=c.execute('SELECT count(*) FROM views WHERE submission_id=?',(row['id'],)).fetchone()[0]
         liked=bool(user() and c.execute('SELECT 1 FROM reactions WHERE submission_id=? AND user_id=?',(row['id'],user()['id'])).fetchone())
+        saved=bool(user() and c.execute('SELECT 1 FROM bookmarks WHERE submission_id=? AND user_id=?',(row['id'],user()['id'])).fetchone())
     r={k:row[k] for k in ('id','title','kind','status','created','parent_id','publish','public_caption','published_at')}
     metadata=json.loads(row['metadata'])
     if not private:metadata={k:v for k,v in metadata.items() if k in ('width','height','duration_seconds','fps','has_audio')}
-    r.update(author=author[0] if author else 'Creator',creator_id=row['user_id'],creator_url='/creators/'+row['user_id'],
-             tags=json.loads(row['tags']),likes=likes,views=seen,liked=liked,
+    r.update(author=author['name'] if author else 'Creator',author_avatar_url=avatar_url(author),creator_id=row['user_id'],creator_url='/creators/'+row['user_id'],
+             tags=json.loads(row['tags']),likes=likes,views=seen,liked=liked,saved=saved,
+             share_url='/watch/'+row['id'] if visible(row) else None,
              video_url='/community/media/'+row['id'],metadata=metadata)
     if private:
         with db() as c:
@@ -166,14 +187,17 @@ def throttle(bucket,limit,seconds=900):
         if n>=limit:abort(429,'Too many attempts. Please try again later.')
         c.execute('INSERT INTO attempts VALUES(?,?)',(bucket,now))
 
-def paid_gate():
-    if os.getenv('AIM_ALLOW_PAID_API','0')!='1':abort(403,'Paid API calls are off. Set AIM_ALLOW_PAID_API=1 in .env and restart when ready.')
+def paid_gate(connection=None):
+    if os.getenv('AIM_ALLOW_PAID_API','0')!='1':abort(403,'Paid API calls are off. Set AIM_ALLOW_PAID_API=1 in .env and restart when ready.' if is_admin() else 'Creation is temporarily unavailable. Please try again later.')
     day=store.now()[:10];cap=max(1,int(os.getenv('AIM_DAILY_PAID_ACTIONS','250')))
-    with db() as c:
-        c.execute('BEGIN IMMEDIATE')
+    def reserve(c):
         n=c.execute('SELECT count(*) FROM paid_actions WHERE user_id=? AND created LIKE ?',(user()['id'],day+'%')).fetchone()[0]
         if n>=cap:abort(429,'Your daily API action limit has been reached.')
         c.execute('INSERT INTO paid_actions VALUES(?,?,?)',(user()['id'],store.now(),request.path))
+    if connection is not None:reserve(connection)
+    else:
+        with db() as c:
+            c.execute('BEGIN IMMEDIATE');reserve(c)
 
 def cleanup_deleted_accounts():
     """Retry committed deletion work after a restart or a temporary disk error."""
@@ -206,7 +230,14 @@ def change_role(uid,role,actor_id=None):
         if target['role']==role:return
         c.execute('UPDATE users SET role=? WHERE id=?',(role,uid))
         c.execute('DELETE FROM sessions WHERE user_id=?',(uid,))
-        if role=='creator':c.execute("UPDATE submissions SET status='submitted',reviewer_id=NULL WHERE reviewer_id=? AND status='in_review'",(uid,))
+        if role=='creator':
+            released=c.execute("SELECT id,user_id FROM submissions WHERE reviewer_id=? AND status='in_review'",(uid,)).fetchall()
+            c.execute("UPDATE submissions SET status='submitted',reviewer_id=NULL WHERE reviewer_id=? AND status='in_review'",(uid,))
+            for item in released:
+                c.execute('INSERT INTO review_events(submission_id,actor_id,action,note,created,details) VALUES(?,?,?,?,?,?)',(item['id'],actor_id or 'server-cli','review_released','Reviewer role changed.',store.now(),'{}'))
+                notifications.clear_review(c,item['id']);notifications.review_available(c,item['id'],item['user_id'])
+            c.execute("UPDATE notifications SET read_at=? WHERE user_id=? AND kind IN ('review_available','review_assigned','review_reminder')",(store.now(),uid))
+            c.execute('DELETE FROM notification_email WHERE user_id=?',(uid,))
         c.execute('INSERT INTO account_events(actor_id,target_id,action,details,created) VALUES(?,?,?,?,?)',
                   (actor_id or 'server-cli',uid,'role_changed',json.dumps({'from':target['role'],'to':role}),store.now()))
 
@@ -229,7 +260,7 @@ def install(app,api):
             r=c.execute('SELECT u.* FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.id=? AND s.expires>?',
                         (session.get('sid',''),time.time())).fetchone()
             if r:g.user=dict(r)
-        public=(request.path.startswith('/static/') or request.path in ('/login','/discover','/api/auth/state','/api/auth/login','/api/auth/register','/api/community/feed') or request.path.startswith(('/community/media/','/creators/','/api/creators/')))
+        public=(request.path.startswith('/static/') or request.path in ('/login','/discover','/api/auth/state','/api/auth/login','/api/auth/register','/api/community/feed','/account/notifications/verify') or request.path.startswith(('/watch/','/api/community/posts/','/community/media/','/creators/','/api/creators/','/profile-images/')))
         if not public and not user():
             if request.path.startswith('/api/'):return jsonify(error='Sign in to continue.'),401
             return redirect('/login')
@@ -239,11 +270,17 @@ def install(app,api):
             if origin and origin.rstrip('/')!=request.host_url.rstrip('/'):abort(403,'Unexpected request origin.')
         if user():
             ps=projects();pid=session.get('project_id')
+            requested_project=request.args.get('project')
+            if requested_project:
+                if requested_project not in {p['id'] for p in ps}:abort(404,'Project not found.')
+                pid=requested_project
             studio_pages={'overview','source','share','idea','brief','characters','script','shots','render','library','assembly','settings','activity'}
             needs_project=(request.path=='/' or request.path.lstrip('/') in studio_pages or request.path in ('/api/state','/api/community/submit')
                            or request.path.startswith(('/assets/','/video/','/assembly/'))
                            or request.path.startswith('/api/') and not request.path.startswith(('/api/auth/','/api/account/','/api/platform/','/api/community/','/api/review/','/api/creators/')))
             if request.path=='/api/community/submit':
+                # Preserve multipart bytes for the durable task before form parsing consumes them.
+                if background_tasks.wants_async():request.get_data(cache=True)
                 fields=submission_fields()
                 requested=fields.get('project_id')
                 if requested:
@@ -256,8 +293,7 @@ def install(app,api):
             else:session.pop('project_id',None)
         if request.method=='POST' and user():
             path=request.path
-            if (path in ('/api/chat','/api/chat/retry','/api/render/submit','/api/ensemble','/api/voice/transcribe','/api/voice/session','/api/source/analyze-next','/api/source/synthesize')
-                or path.startswith('/api/generate/') or re.fullmatch(r'/api/characters/[^/]+/image',path)):
+            if background_tasks.is_paid(path) and not background_tasks.wants_async():
                 paid_gate()
 
     @app.teardown_request
@@ -274,15 +310,20 @@ def install(app,api):
     @app.get('/discover')
     @app.get('/account')
     @app.get('/account/settings')
+    @app.get('/account/likes')
+    @app.get('/account/saved')
+    @app.get('/account/notifications')
+    @app.get('/account/tasks')
     @app.get('/review')
     @app.get('/creators/<creator_id>')
-    def portal_page(creator_id=None):
+    @app.get('/watch/<sid>')
+    def portal_page(creator_id=None,sid=None):
         if request.path=='/review':required_staff()
         return render_template('portal.html',token=csrf())
 
     @app.get('/api/auth/state')
     def auth_state():
-        return jsonify(user={k:user()[k] for k in ('id','name','email','role','bio')} if user() else None,csrf=csrf(),projects=projects() if user() else [],first_account=not any_users(),paid_enabled=os.getenv('AIM_ALLOW_PAID_API')=='1')
+        return jsonify(user={**{k:user()[k] for k in ('id','name','email','role','bio')},'avatar_url':avatar_url(user())} if user() else None,csrf=csrf(),projects=projects() if user() else [],first_account=not any_users(),paid_enabled=os.getenv('AIM_ALLOW_PAID_API')=='1')
 
     @app.post('/api/auth/register')
     def register():
@@ -330,6 +371,67 @@ def install(app,api):
         with db() as c:c.execute('UPDATE users SET name=?,bio=? WHERE id=?',(name,bio,user()['id']))
         return jsonify(ok=True)
 
+    @app.post('/api/account/avatar')
+    def upload_avatar():
+        upload=request.files.get('file')
+        if not upload:abort(400,'Choose a JPG, PNG or WebP profile picture.')
+        blob=upload.read(5*1024*1024+1)
+        if not blob or len(blob)>5*1024*1024:abort(400,'Use a profile picture under 5 MB.')
+        try:
+            with Image.open(io.BytesIO(blob)) as source:
+                if source.format not in ('JPEG','PNG','WEBP') or getattr(source,'is_animated',False):
+                    abort(400,'Use a still JPG, PNG or WebP image.')
+                if source.width*source.height>16_000_000:abort(400,'Use an image no larger than 16 million pixels.')
+                source.load()
+                image=ImageOps.fit(ImageOps.exif_transpose(source).convert('RGB'),(512,512),method=Image.Resampling.LANCZOS)
+            output=io.BytesIO();image.save(output,format='JPEG',quality=88)
+        except (UnidentifiedImageError,OSError,ValueError,Image.DecompressionBombError):
+            abort(400,'That image could not be read. Use a still JPG, PNG or WebP image.')
+        uid=user()['id'];filename=uuid.uuid4().hex+'.jpg'
+        with api['LOCK']:
+            with db() as c:
+                current=c.execute('SELECT avatar FROM users WHERE id=?',(uid,)).fetchone()
+                if not current:abort(401,'Sign in again.')
+                directory=avatar_directory(uid);directory.mkdir(parents=True,exist_ok=True)
+                path=directory/filename;path.write_bytes(output.getvalue())
+                try:c.execute('UPDATE users SET avatar=? WHERE id=?',(filename,uid))
+                except Exception:path.unlink(missing_ok=True);raise
+            if current['avatar']:
+                try:(directory/Path(current['avatar']).name).unlink(missing_ok=True)
+                except OSError:pass  # Superseded filenames are never served by the route below.
+        return jsonify(ok=True,avatar_url='/profile-images/'+uid+'/'+filename)
+
+    @app.post('/api/account/avatar/remove')
+    def remove_avatar():
+        uid=user()['id']
+        with api['LOCK']:
+            with db() as c:
+                row=c.execute('SELECT avatar FROM users WHERE id=?',(uid,)).fetchone()
+                if not row:abort(401,'Sign in again.')
+                c.execute("UPDATE users SET avatar='' WHERE id=?",(uid,))
+            if row['avatar']:
+                try:(avatar_directory(uid)/Path(row['avatar']).name).unlink(missing_ok=True)
+                except OSError:pass
+        return jsonify(ok=True)
+
+    @app.get('/profile-images/<uid>/<filename>')
+    def profile_image(uid,filename):
+        if not re.fullmatch(r'[a-f0-9]{32}\.jpg',filename):abort(404)
+        directory=avatar_directory(uid)
+        with db() as c:row=c.execute('SELECT avatar FROM users WHERE id=?',(uid,)).fetchone()
+        if not row or row['avatar']!=filename or not (directory/filename).is_file():abort(404)
+        return send_file(directory/filename,mimetype='image/jpeg',conditional=True)
+
+    @app.get('/api/account/likes')
+    def liked_creations():
+        try:offset=max(0,int(request.args.get('offset',0)))
+        except ValueError:abort(400,'Invalid page.')
+        where="FROM reactions l JOIN submissions s ON s.id=l.submission_id WHERE l.user_id=? AND s.status='published' AND s.publish=1"
+        with db() as c:
+            total=c.execute('SELECT count(*) '+where,(user()['id'],)).fetchone()[0]
+            rows=c.execute('SELECT s.* '+where+' ORDER BY l.rowid DESC LIMIT 12 OFFSET ?',(user()['id'],offset)).fetchall()
+        return jsonify(items=[serialize(dict(r)) for r in rows],total=total,next_offset=offset+12 if offset+12<total else None)
+
     @app.get('/api/account/admin/users')
     def list_accounts():
         if user()['role']!='admin':abort(403,'Administrator access is required.')
@@ -357,6 +459,9 @@ def install(app,api):
         throttle('delete-account:'+uid,5)
         if not check_password_hash(user()['password'],str(v.get('current_password',''))):abort(403,'Current password is incorrect.')
         if v.get('confirmation')!='DELETE':abort(400,'Type DELETE to confirm account deletion.')
+        with db() as c:
+            if c.execute("SELECT 1 FROM background_tasks WHERE user_id=? AND status IN ('queued','running','waiting') LIMIT 1",(uid,)).fetchone():
+                abort(409,'Let your active tasks finish before deleting your account. Book analysis can be paused from Tasks.')
         with api['LOCK'],db() as c:
             c.execute('BEGIN IMMEDIATE')
             current=c.execute('SELECT role FROM users WHERE id=?',(uid,)).fetchone()
@@ -368,12 +473,20 @@ def install(app,api):
             for row in rows:
                 names.add(row['path']);names.add(row['id']+'.source')
                 names.update(x['file'] for x in json.loads(row['metadata']).get('context',[]) if x.get('file'))
-                for table in ('reactions','views','reports','review_events'):
+                notifications.clear_review(c,row['id'])
+                for table in ('reactions','views','reports','review_events','bookmarks'):
                     c.execute('DELETE FROM '+table+' WHERE submission_id=?',(row['id'],))
             c.execute('DELETE FROM submissions WHERE user_id=?',(uid,))
+            released=c.execute("SELECT id,user_id FROM submissions WHERE reviewer_id=? AND status='in_review'",(uid,)).fetchall()
             c.execute("UPDATE submissions SET status='submitted',reviewer_id=NULL WHERE reviewer_id=? AND status='in_review'",(uid,))
+            for item in released:
+                c.execute('INSERT INTO review_events(submission_id,actor_id,action,note,created,details) VALUES(?,?,?,?,?,?)',(item['id'],uid,'review_released','Reviewer account deleted.',store.now(),'{}'))
+                notifications.clear_review(c,item['id']);notifications.review_available(c,item['id'],item['user_id'])
             for table in ('sessions','projects','paid_actions','reactions','views','reports'):
                 c.execute('DELETE FROM '+table+' WHERE user_id=?',(uid,))
+            for table in ('bookmarks','follows','notifications','notification_preferences','notification_email','background_tasks'):
+                c.execute('DELETE FROM '+table+' WHERE user_id=?',(uid,))
+            c.execute('DELETE FROM follows WHERE creator_id=?',(uid,))
             c.execute('DELETE FROM users WHERE id=?',(uid,))
             c.execute('INSERT INTO account_cleanup VALUES(?,?)',(uid,json.dumps(sorted(names))))
             c.execute('INSERT INTO account_events(actor_id,target_id,action,details,created) VALUES(?,?,?,?,?)',(uid,uid,'account_deleted','{}',store.now()))
@@ -386,12 +499,13 @@ def install(app,api):
         if not re.fullmatch('[a-f0-9]{32}',creator_id):abort(404,'Profile not found.')
         offset=max(0,min(int(request.args.get('offset',0)),10000))
         with db() as c:
-            u=c.execute('SELECT id,name,bio FROM users WHERE id=?',(creator_id,)).fetchone()
+            u=c.execute('SELECT id,name,bio,avatar FROM users WHERE id=?',(creator_id,)).fetchone()
             if not u:abort(404,'Profile not found.')
             total=c.execute("SELECT count(*) FROM submissions WHERE user_id=? AND status='published' AND publish=1",(creator_id,)).fetchone()[0]
             likes=c.execute("SELECT count(*) FROM reactions r JOIN submissions s ON s.id=r.submission_id WHERE s.user_id=? AND s.status='published' AND s.publish=1",(creator_id,)).fetchone()[0]
             rows=c.execute("SELECT * FROM submissions WHERE user_id=? AND status='published' AND publish=1 ORDER BY published_at DESC,rowid DESC LIMIT 12 OFFSET ?",(creator_id,offset)).fetchall()
-        return jsonify(profile={**dict(u),'url':'/creators/'+creator_id,'published_count':total,'likes':likes,'is_owner':bool(user() and user()['id']==creator_id)},
+            following=bool(user() and c.execute('SELECT 1 FROM follows WHERE user_id=? AND creator_id=?',(user()['id'],creator_id)).fetchone())
+        return jsonify(profile={**{k:u[k] for k in ('id','name','bio')},'avatar_url':avatar_url(u),'url':'/creators/'+creator_id,'published_count':total,'likes':likes,'following':following,'is_owner':bool(user() and user()['id']==creator_id)},
                        items=[serialize(dict(r)) for r in rows],next_offset=offset+12 if offset+12<total else None)
 
     @app.post('/api/platform/projects')
@@ -406,21 +520,70 @@ def install(app,api):
 
     @app.get('/api/community/feed')
     def feed():
-        offset=max(0,min(int(request.args.get('offset',0)),10000));mode=request.args.get('mode','foryou')
+        try:offset=max(0,int(request.args.get('offset',0)))
+        except ValueError:abort(400,'Invalid page.')
+        mode=request.args.get('mode','foryou');q=str(request.args.get('q','')).strip()[:120]
+        kind=request.args.get('kind','');audio=request.args.get('audio','')
+        if mode not in ('foryou','latest','following') or kind not in ('','clip','scene','movie') or audio not in ('','yes','no'):abort(400,'Choose valid search filters.')
+        clauses=["s.status='published'","s.publish=1"];params=[]
+        if q:
+            clauses.append("(instr(lower(s.title||' '||s.public_caption||' '||s.tags||' '||COALESCE(u.name,'')),lower(?))>0)");params.append(q)
+        if kind:clauses.append('s.kind=?');params.append(kind)
+        if audio:clauses.append("COALESCE(json_extract(s.metadata,'$.has_audio'),0)=?");params.append(int(audio=='yes'))
+        if mode=='following':
+            if not user():return jsonify(items=[],next_offset=None)
+            clauses.append('s.user_id IN (SELECT creator_id FROM follows WHERE user_id=?)');params.append(user()['id'])
         with db() as c:
-            rows=[dict(r) for r in c.execute("SELECT * FROM submissions WHERE status='published' AND publish=1 ORDER BY published_at DESC,rowid DESC LIMIT 500")]
-            fav=set();seen=set()
+            fav=set()
             if user():
                 for r in c.execute('SELECT s.tags FROM submissions s JOIN reactions l ON l.submission_id=s.id WHERE l.user_id=?',(user()['id'],)):fav.update(json.loads(r[0]))
-                seen={r[0] for r in c.execute('SELECT submission_id FROM views WHERE user_id=?',(user()['id'],))}
-        output=[serialize(r) for r in rows]
-        if mode=='foryou':
-            def rank(r):
-                age=max(0,(dt.datetime.now(dt.timezone.utc)-dt.datetime.fromisoformat(r['published_at'] or r['created'])).total_seconds()/3600)
-                return 3*len(fav.intersection(r['tags']))+math.log1p(r['likes'])+2/(1+age/24)-(2 if r['id'] in seen else 0)
-            output.sort(key=rank,reverse=True)
-        # A finite local prototype feed, not an ML recommendation service.
-        return jsonify(items=output[offset:offset+8],next_offset=offset+8 if offset+8<len(output) else None)
+            order='s.published_at DESC,s.rowid DESC';rank_params=[]
+            if mode=='foryou':
+                rank="(SELECT count(*) FROM reactions r WHERE r.submission_id=s.id)*0.1 + 2/(1+MAX(0,julianday('now')-julianday(COALESCE(s.published_at,s.created))))"
+                for tag in sorted(fav)[:40]:rank+=' + CASE WHEN instr(s.tags,?)>0 THEN 3 ELSE 0 END';rank_params.append(json.dumps(tag))
+                if user():rank+=' - CASE WHEN EXISTS(SELECT 1 FROM views v WHERE v.submission_id=s.id AND v.user_id=?) THEN 2 ELSE 0 END';rank_params.append(user()['id'])
+                order='('+rank+') DESC,'+order
+            rows=c.execute('SELECT s.* FROM submissions s LEFT JOIN users u ON u.id=s.user_id WHERE '+' AND '.join(clauses)+' ORDER BY '+order+' LIMIT 9 OFFSET ?',(*params,*rank_params,offset)).fetchall()
+        return jsonify(items=[serialize(dict(r)) for r in rows[:8]],next_offset=offset+8 if len(rows)>8 else None)
+
+    @app.get('/api/community/posts/<sid>')
+    def public_creation(sid):
+        row=submission(sid)
+        if not visible(row):abort(404,'This creation is unavailable. It may have been unpublished or removed.')
+        return jsonify(item=serialize(row))
+
+    @app.get('/api/account/saved')
+    def saved_creations():
+        try:offset=max(0,int(request.args.get('offset',0)))
+        except ValueError:abort(400,'Invalid page.')
+        with db() as c:
+            rows=c.execute('SELECT s.* FROM bookmarks b JOIN submissions s ON s.id=b.submission_id WHERE b.user_id=? ORDER BY b.rowid DESC LIMIT 13 OFFSET ?',(user()['id'],offset)).fetchall()
+        items=[serialize(dict(r)) if visible(r) else {'id':r['id'],'unavailable':True} for r in rows[:12]]
+        return jsonify(items=items,next_offset=offset+12 if len(rows)>12 else None)
+
+    @app.post('/api/community/<sid>/save')
+    def save_creation(sid):
+        value=payload().get('saved')
+        if not isinstance(value,bool):abort(400,'Choose Save or Remove saved.')
+        with db() as c:
+            c.execute('BEGIN IMMEDIATE')
+            if value:
+                row=c.execute('SELECT * FROM submissions WHERE id=?',(sid,)).fetchone()
+                if not row or not visible(row):abort(404,'This creation is unavailable.')
+                c.execute('INSERT OR IGNORE INTO bookmarks VALUES(?,?,?)',(user()['id'],sid,store.now()))
+            else:c.execute('DELETE FROM bookmarks WHERE user_id=? AND submission_id=?',(user()['id'],sid))
+        return jsonify(ok=True,saved=value)
+
+    @app.post('/api/creators/<creator_id>/follow')
+    def follow_creator(creator_id):
+        value=payload().get('following')
+        if not isinstance(value,bool):abort(400,'Choose Follow or Unfollow.')
+        if creator_id==user()['id']:abort(400,'You cannot follow yourself.')
+        with db() as c:
+            if not c.execute('SELECT 1 FROM users WHERE id=?',(creator_id,)).fetchone():abort(404,'Profile not found.')
+            if value:c.execute('INSERT OR IGNORE INTO follows VALUES(?,?)',(user()['id'],creator_id))
+            else:c.execute('DELETE FROM follows WHERE user_id=? AND creator_id=?',(user()['id'],creator_id))
+        return jsonify(ok=True,following=value)
 
     @app.get('/api/community/mine')
     def mine():
@@ -484,6 +647,7 @@ def install(app,api):
                     (sid,user()['id'],g.project_id,title,'',json.dumps(tags),kind,'submitted',path.name,digest,json.dumps(meta),store.now(),None,json.dumps(policy()),'',None,parent,0,notes,caption))
                 c.execute("UPDATE projects SET name=? WHERE id=? AND user_id=? AND name='Untitled movie'",(title,g.project_id,user()['id']))
                 event(c,sid,'submitted','Creator requested review and confirmed sharing permission.',{'project_id':g.project_id})
+                notifications.review_available(c,sid,user()['id'],bool(parent))
         except Exception:
             path.unlink(missing_ok=True)
             for item in context:(MEDIA/item['file']).unlink(missing_ok=True)
@@ -558,6 +722,7 @@ def install(app,api):
                 c.execute('INSERT INTO submissions(id,user_id,project_id,title,description,tags,kind,status,path,digest,metadata,created,reviewer_id,policy,decision_note,checks,parent_id,publish,review_notes,public_caption) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                           (new_id,row['user_id'],row['project_id'],row['title'],'',row['tags'],row['kind'],'submitted',row['path'],row['digest'],row['metadata'],store.now(),None,json.dumps(policy()),'',None,sid,0,row['review_notes'],caption))
                 event(c,new_id,'submitted','Creator revised the public caption and requested review.',{'parent_id':sid,'project_id':row['project_id']})
+                notifications.review_available(c,new_id,user()['id'],True)
         return jsonify(ok=True,item=serialize(submission(new_id),True))
 
     @app.post('/api/community/<sid>/unpublish')
@@ -576,6 +741,7 @@ def install(app,api):
         if row['user_id']!=user()['id']:abort(403)
         with db() as c:
             c.execute("UPDATE submissions SET publish=0,status='withdrawn' WHERE id=?",(sid,));event(c,sid,'withdrawn')
+            notifications.clear_review(c,sid)
         return jsonify(ok=True)
 
     @app.get('/api/review/queue')
@@ -583,6 +749,10 @@ def install(app,api):
         required_staff()
         with db() as c:
             rows=c.execute("SELECT * FROM submissions ORDER BY created DESC,rowid DESC LIMIT 200").fetchall()
+            selected=request.args.get('selected','')
+            if selected and selected not in {r['id'] for r in rows}:
+                item=c.execute('SELECT * FROM submissions WHERE id=?',(selected,)).fetchone()
+                if item:rows.append(item)
             reports=[dict(r) for r in c.execute("SELECT * FROM reports WHERE status='open'")]
         return jsonify(items=[serialize(dict(r),True) for r in rows],reports=reports,policy=policy(),user_id=user()['id'])
 
@@ -603,6 +773,8 @@ def install(app,api):
             if r['status'] not in ('submitted','in_review'):abort(409,'This item is no longer awaiting review.')
             if r['reviewer_id'] and r['reviewer_id']!=user()['id']:abort(409,'Another reviewer has claimed this item.')
             c.execute("UPDATE submissions SET status='in_review',reviewer_id=? WHERE id=?",(user()['id'],sid));event(c,sid,'claimed')
+            notifications.clear_review(c,sid)
+            notifications.add(c,user()['id'],'review_assigned','You claimed a creation for review.','/review?submission='+sid,sid)
         return jsonify(ok=True)
 
     @app.post('/api/review/<sid>/decision')
@@ -627,6 +799,9 @@ def install(app,api):
             c.execute('UPDATE submissions SET status=?,publish=0,decision_note=?,checks=? WHERE id=?',(action,note,json.dumps(checks),sid))
             if action=='taken_down':c.execute("UPDATE reports SET status='resolved' WHERE submission_id=?",(sid,))
             event(c,sid,action,note or ('Approved and returned to creator; awaiting their Publish action.' if action=='approved' else ''),{'checks':checks,'policy_version':json.loads(row['policy'])['version'],'creator_id':row['user_id']})
+            notifications.clear_review(c,sid)
+            titles={'approved':'Approved — your creation is ready to publish.','changes_requested':'Your creation has feedback to review.','rejected':'A review decision is available.','taken_down':'Your creation was removed from publication.'}
+            notifications.add(c,row['user_id'],'review_decision',titles[action],'/share?project='+row['project_id'],sid,'decision:'+sid+':'+str(c.execute('SELECT max(id) FROM review_events').fetchone()[0]))
         return jsonify(ok=True)
 
     @app.post('/api/review/policy')

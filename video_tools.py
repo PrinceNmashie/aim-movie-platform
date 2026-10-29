@@ -1,4 +1,5 @@
 """Local video processing. No generation API calls or shell interpolation."""
+import base64
 import math
 import re
 import shutil
@@ -144,3 +145,31 @@ def combine(paths, destination):
         return output_metadata
     finally:
         pending.unlink(missing_ok=True)
+
+
+def find_video(output):
+    """Return ('url', url) or ('bytes', bytes), else (None,None). Limited to video hints."""
+    def scan(obj, path=''):
+        if isinstance(obj,dict):
+            for k,v in obj.items():
+                p=(path+'.'+k).lower()
+                if isinstance(v,str):
+                    if v.startswith(('https://','http://')) and (re.search(r'\.(mp4|webm|mov)(\?|$)',v,re.I) or any(t in p for t in ('video','url','output','file'))):
+                        return ('url',v)
+                    if ('video' in p or v.startswith('data:video/') or (p.endswith('.data') and obj.get('type')=='base64' and str(obj.get('filename','')).lower().endswith(('.mp4','.mov','.webm')))) and len(v)>100:
+                        if v.startswith('data:video/') and ';base64,' in v:
+                            try:return ('bytes',base64.b64decode(v.split(',',1)[1],validate=True))
+                            except Exception:pass
+                        if re.fullmatch(r'[A-Za-z0-9+/=\r\n]+',v):
+                            try:
+                                raw=base64.b64decode(v,validate=True)
+                                if b'ftyp' in raw[:32] or raw[:4]==b'\x1aE\xdf\xa3':return ('bytes',raw)
+                            except Exception:pass
+                found=scan(v,p)
+                if found[0]:return found
+        elif isinstance(obj,list):
+            for el in obj:
+                found=scan(el,path)
+                if found[0]:return found
+        return (None,None)
+    return scan(output)
