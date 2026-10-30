@@ -1,6 +1,6 @@
 # AIM.movie Creator Platform — non-storyboard version
 
-> **Current combined release: reliability and engagement (October 29, 2026).** Start with [UPDATE_AIM_COMPLETE.md](UPDATE_AIM_COMPLETE.md). It includes all prior account/Runway work plus saved background tasks, notifications, verified optional email, bookmarks/public sharing, following/search, continuity-focused planning and an admin benchmark export. Install the complete file set together. The existing instructions below describe retained provider capabilities.
+> **Current release: UI refresh (October 30, 2026).** Start with [UPDATE_UI_REFRESH.md](UPDATE_UI_REFRESH.md). It includes prior releases plus the swipe feed, speaker icons, creator profiles/settings, conversation clearing, longer-take planning and character-reference inputs for supported Runway models. Install the complete file set together.
 
 Updated October 28, 2026. This Flask app includes private accounts/projects, whole-book import, conversation and live voice with MIA, creative planning, video generation, last-frame continuation, named archives, scene assembly, staff review, creator-controlled publication, and a community feed. AIM.movie remains the site name.
 
@@ -8,9 +8,9 @@ This release replaces Runpod with **Runway Developer**, exposing all 25 document
 
 ## Update your existing Render installation
 
-Use **AIM_movie_Runway_Profile_Update.zip** for an existing hosted installation. Extract it first; GitHub needs the files inside it, not the ZIP itself. Read `UPDATE_RUNWAY_PROFILE.md` for the exact file list.
+Use **AIM_movie_UI_Refresh_Update.zip** for an existing hosted installation. Extract it first; GitHub needs the files inside it, not the ZIP itself. Read `UPDATE_UI_REFRESH.md` for the current installation steps.
 
-1. Back up the entire persistent data directory, including `platform.sqlite`, user/project files, community media and the session secret. Keep your current deployment settings as well.
+1. Keep the existing Render service, persistent disk mount and `AIM_DATA_DIR`. No persistent-data download or upload is required for this code update. Accounts, projects and media stay on that disk.
 2. Replace the listed Python and `static/` files. Add the new root file `runway_client.py`. Preserve the `static` folder structure when uploading through GitHub.
 3. Delete the retired root files `runpod_client.py` and `workflow.json` from the application source. Keep an offline copy of any customized old workflow for historical reference.
 4. Keep your existing `wsgi.py`, Gunicorn/hosting additions to `requirements.txt`, Render start command, persistent disk and data-path settings. Keep your real `.env`; `.env.example` is only a template.
@@ -20,7 +20,7 @@ Use **AIM_movie_Runway_Profile_Update.zip** for an existing hosted installation.
 
 Removing this integration does **not** stop external Runpod resources. Stop/delete workers or Pods you no longer need in Runpod to avoid ongoing charges. Previously downloaded Runpod clips remain playable and usable for assembly/review. Unfinished old Runpod tasks cannot be refreshed through this release.
 
-No new Python packages are required. The full ZIP is also available for a clean local installation; keep your customized Render requirements when updating a hosted app.
+Requirements include Gunicorn for the Render entry point. The full ZIP also supports a clean local installation; retain any other customized hosting dependencies.
 
 ## Connect and use Runway
 
@@ -56,7 +56,7 @@ In Produce → Render, choose Runway, then select a model. The picker changes le
 
 Contracts and prices were checked against official Runway Developer documentation on October 28, 2026. Account access/region/provider moderation may still reject a documented model. The app does not query a per-account available-model list or fall back to another paid model automatically.
 
-For Runway image mode, select Picture 1 or Picture 2 as the first frame. This workflow sends one starting image. It does not send an entire previous video, additional keyframes or multimodal reference sets. Use a composed scene frame or captured last frame. Text mode sends no images. Additional Runway editing, motion capture, image/audio generation and upscaling endpoints are outside this model picker.
+Choose Image references for Runway Wan 3.0/Prime, Seedance 2.0/Fast/Mini, Seedance 2.5 or Kling 4.0 to send character sheets as references. Opening-frame mode sends one composed scene frame or captured last frame; a bound character sheet is blocked in that mode. Text-only sends no images. Previous-video and extra-keyframe inputs are not exposed. Additional Runway editing, motion capture, image/audio generation and upscaling endpoints are outside this model picker.
 
 The prompt counter uses each model's actual limit (1,000–26,000 UTF-16 units). Some emoji count as two. Supported sound toggles are sent only to models that accept them; quality and shape controls likewise send only supported fields. Selected duration is restricted to the model's allowed choices, including Veo's discrete 4/6/8-second choices. Changing models fits the current duration to the nearest supported value and preserves the original shot plan. No automatic extra paid calls occur.
 

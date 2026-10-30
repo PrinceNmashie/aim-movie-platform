@@ -89,6 +89,10 @@ def build_request(prompt, settings, images):
         if slot not in ('ref_a', 'ref_b') or not images.get(slot):
             raise ValueError('Choose or upload the selected starting frame before generating with Runway.')
         payload['promptImage'] = image_data(images[slot], settings['runway_model'])
+    elif settings['runway_mode'] == 'reference':
+        refs=[image_data(images[s],settings['runway_model']) for s in ('ref_a','ref_b') if images.get(s)]
+        if not refs:raise ValueError('Add at least one character reference before generating.')
+        payload['references']=[{'uri':uri} for uri in refs]
     return payload
 
 

@@ -53,6 +53,7 @@ def install(app,api):
     def turn():
         v=body();sid=v.get('session_id');sessions=store.get('live_voice_sessions',{});vs=sessions.get(sid)
         if not vs or time.time()-vs['started']>7200:abort(409,'This voice session has expired. Start another one.')
+        if vs.get('cleared'):abort(409,'This conversation was cleared. Start a new voice session.')
         item=str(v.get('item_id',''));role=v.get('role');text=str(v.get('text','')).strip()
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,160}',item) or role not in ('user','assistant') or len(text)>16000:raise ValueError('Invalid voice turn.')
         if len(vs['turns'])>=400 and item not in vs['turns']:raise ValueError('End this session and start a new conversation.')

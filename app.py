@@ -388,6 +388,18 @@ def retry_chat():
     store.append_message('assistant', reply)
     return jsonify(snapshot())
 
+@app.post('/api/chat/clear')
+@mutation
+def clear_chat():
+    options=body()
+    if options.get('confirm') is not True:raise ValueError('Confirm that you want to clear this conversation.')
+    with store.connect() as c:c.execute('DELETE FROM chat_messages')
+    sessions=store.get('live_voice_sessions',{})
+    for entry in sessions.values():entry['cleared']=True;entry['closed']=True
+    store.put('live_voice_sessions',sessions)
+    store.record('Idea','Creator cleared the conversation. Existing drafts and media were kept.')
+    return jsonify(snapshot())
+
 def require_approved(stage):
     if not store.get('workflow_meta', {}).get('approved', {}).get(stage):
         labels = {'vision': 'creative brief', 'characters': 'characters', 'script': 'script', 'director': 'shots'}
@@ -469,6 +481,10 @@ def save_draft(stage):
 @app.post('/api/approve/<stage>')
 @mutation
 def approve(stage):
+    if stage=='director':
+        current=store.get('director',{})
+        packed=studio.consolidate_shots(current,video_providers.limits(preferences())['durations'])
+        if packed!=current:studio.save('director',packed,'Packed connected action into continuous takes')
     studio.approve(stage)
     return jsonify(snapshot())
 
@@ -702,9 +718,10 @@ def compile_prompt():
     return jsonify(snapshot())
 
 def attach_references(shot):
-    """Fill vacant identity-reference slots; preserve intentional uploads and continuation frames."""
+    """Refresh automatically selected identities; preserve intentional uploads and frames."""
     prefs=preferences()
-    if prefs['video_provider']!='alibaba' or prefs['wan_mode']!='reference':return
+    mode=prefs['wan_mode'] if prefs['video_provider']=='alibaba' else prefs['runway_mode']
+    if mode!='reference':return
     wanted={str(x).casefold() for x in shot.get('characters',[])}
     cast=[c for c in characters_value()['characters'] if not wanted or c['id'].casefold() in wanted or c['name'].casefold() in wanted]
     ensemble=store.get('ensemble',{});combined=next((v for v in ensemble.get('images',[]) if v['id']==ensemble.get('current_image')),None)
@@ -712,12 +729,16 @@ def attach_references(shot):
     for c in cast:
         image=studio.selected_image(c)
         if image and asset_path(image.get('path')):candidates.append((image['path'],{'kind':'character','character_id':c['id'],'image_id':image['id']}))
-    bindings=store.get('reference_bindings',{});used={store.get(s) for s in ('ref_a','ref_b') if store.get(s)}
+    bindings=store.get('reference_bindings',{})
+    for slot in ('ref_a','ref_b'):
+        if bindings.get(slot,{}).get('automatic'):
+            store.put(slot,'');bindings.pop(slot,None)
+    used={store.get(s) for s in ('ref_a','ref_b') if store.get(s)}
     for slot in ('ref_a','ref_b'):
         if store.get(slot):continue
         item=next(((path,binding) for path,binding in candidates if path not in used),None)
         if item:
-            path,binding=item;store.put(slot,path);bindings[slot]=binding;used.add(path)
+            path,binding=item;store.put(slot,path);bindings[slot]={**binding,'automatic':True};used.add(path)
     store.put('reference_bindings',bindings)
 
 def render_preflight(options):
@@ -744,7 +765,7 @@ def render_preflight(options):
         if mode=='first_frame':
             slot=settings['runway_start_slot'] if settings['video_provider']=='runway' else settings['wan_start_slot']
             binding=store.get('reference_bindings',{}).get(slot,{})
-            if binding.get('kind') in ('character','ensemble'):warnings.append('The starting image is a reference sheet. Create a scene starting frame to avoid animating multiple character views.')
+            if binding.get('kind') in ('character','ensemble'):errors.append('This image is a character reference sheet, not an opening frame. Choose Image references with a supported model, or create a scene opening frame.')
             if binding.get('kind')=='scene_frame' and shot and binding.get('shot_id')!=shot['id']:warnings.append('Your starting frame belongs to another shot. Check the composition before continuing.')
         elif mode=='text' and characters_value()['characters']:warnings.append('Text-only generation does not send your character images. Identity may vary between clips.')
         if store.get('continuation',{}).get('source_job_id') and mode=='text':warnings.append('This continuation uses text only. Select starting-frame mode to carry forward the previous clip’s last frame.')

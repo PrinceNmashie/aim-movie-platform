@@ -1,42 +1,49 @@
-AIM.movie combined update — install the entire set together.
-Keep your .env, persistent data, wsgi.py and deployment additions.
+AIM.movie UI refresh — install all files together.
+Upload the extracted contents to the existing GitHub repository.
+Keep Render’s persistent disk, data-path settings and environment values.
+No persistent-data download/upload is required.
 
 .env.example
-ai_layers.py
+.gitignore
+README.md
+SOURCE_MANIFEST.json
+UPDATE_AIM_COMPLETE.md
+UPDATE_FILE_LIST.txt
+UPDATE_RUNWAY_PROFILE.md
+UPDATE_UI_REFRESH.md
+VERIFICATION.md
 app.py
-background_tasks.py
-book_source.py
 creator_portal.py
+examples/The_Last_Light.txt
 live_voice.py
-manage.py
-notifications.py
 requirements.txt
 runway_client.py
-runway_models.json
 runway_models.py
-start.bat
-start.command
 static/app.js
-static/engagement.css
-static/engagement.js
-static/favicon.svg
-static/platform.css
+static/feed.js
 static/platform.js
 static/portal.js
 static/portal_extras.js
 static/providers.js
-static/providers_voice.css
-static/publication.js
-static/style.css
-static/video.css
+static/ui.css
+static/ui.js
 static/voice.js
-store.py
 studio.py
 templates/index.html
 templates/portal.html
-usage_ledger.py
+tests/export_ui_fixture.py
+tests/frontend_contracts.mjs
+tests/test_background_engagement.py
+tests/test_creator_platform.py
+tests/test_model_catalog.py
+tests/test_providers_voice.py
+tests/test_runway_errors.py
+tests/test_runway_profiles_likes.py
+tests/test_studio.py
+tests/test_ui_refresh.py
+tests/ui_refresh_dom.mjs
 video_providers.py
-video_tools.py
-wan_client.py
+wsgi.py
 
-Included guides: UPDATE_AIM_COMPLETE.md, UPDATE_RUNWAY_PROFILE.md, VERIFICATION.md.
+If present, delete only these retired source files: runpod_client.py, workflow.json.
+Do not delete runway_models.json. No live data or secrets are included.

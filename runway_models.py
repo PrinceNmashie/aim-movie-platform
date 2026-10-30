@@ -6,10 +6,17 @@ No source videos, draft enhancement, HDR or alternate output formats are sent.
 import datetime as dt
 import json
 import math
+import copy
 from pathlib import Path
 
 CATALOG = json.loads(Path(__file__).with_suffix('.json').read_text())
 MODELS = {m['id']: m for m in CATALOG['models']}
+REFERENCE_MODELS = ('wan3','wan3_prime','seedance2','seedance2_fast','seedance2_mini','seedance2_5','kling_4')
+# These contracts use /text_to_video with `references`, never a first-frame promptImage.
+for mid in REFERENCE_MODELS:
+    MODELS[mid]['modes']['reference'] = copy.deepcopy(MODELS[mid]['modes']['text'])
+    if mid in ('wan3','wan3_prime','kling_4'):
+        MODELS[mid]['modes']['reference']['ratios'] = [r for r in MODELS[mid]['modes']['reference']['ratios'] if not r.startswith('auto_')]
 
 
 def contract(settings):
@@ -29,7 +36,7 @@ def normalize_settings(settings):
         result['runway_model'] = 'gen4.5'
     model = MODELS[result['runway_model']]
     if result.get('runway_mode') not in model['modes']:
-        result['runway_mode'] = 'first_frame'
+        result['runway_mode'] = 'reference' if 'reference' in model['modes'] else 'first_frame'
     spec = contract(result)
     for field, choices in [('runway_ratio', spec['ratios']), ('runway_resolution', spec['resolutions'])]:
         if result.get(field) not in choices:

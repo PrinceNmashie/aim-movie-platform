@@ -1,3 +1,5 @@
+> Historical provider update: use [UPDATE_UI_REFRESH.md](UPDATE_UI_REFRESH.md) for the current interface, reference modes and installation. It supersedes the earlier first-frame-only description. No persistent-data download is required for this code update.
+
 > The newer combined update also includes background work, notifications and engagement. Use [UPDATE_AIM_COMPLETE.md](UPDATE_AIM_COMPLETE.md) for the complete installation. This document remains a reference for provider capabilities.
 
 # Runway model catalog, 30-second Wan and account update

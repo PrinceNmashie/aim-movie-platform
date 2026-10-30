@@ -505,7 +505,9 @@ def install(app,api):
             likes=c.execute("SELECT count(*) FROM reactions r JOIN submissions s ON s.id=r.submission_id WHERE s.user_id=? AND s.status='published' AND s.publish=1",(creator_id,)).fetchone()[0]
             rows=c.execute("SELECT * FROM submissions WHERE user_id=? AND status='published' AND publish=1 ORDER BY published_at DESC,rowid DESC LIMIT 12 OFFSET ?",(creator_id,offset)).fetchall()
             following=bool(user() and c.execute('SELECT 1 FROM follows WHERE user_id=? AND creator_id=?',(user()['id'],creator_id)).fetchone())
-        return jsonify(profile={**{k:u[k] for k in ('id','name','bio')},'avatar_url':avatar_url(u),'url':'/creators/'+creator_id,'published_count':total,'likes':likes,'following':following,'is_owner':bool(user() and user()['id']==creator_id)},
+            followers=c.execute('SELECT count(*) FROM follows WHERE creator_id=?',(creator_id,)).fetchone()[0]
+            following_count=c.execute('SELECT count(*) FROM follows WHERE user_id=?',(creator_id,)).fetchone()[0]
+        return jsonify(profile={**{k:u[k] for k in ('id','name','bio')},'avatar_url':avatar_url(u),'url':'/creators/'+creator_id,'published_count':total,'likes':likes,'followers':followers,'following_count':following_count,'following':following,'is_owner':bool(user() and user()['id']==creator_id)},
                        items=[serialize(dict(r)) for r in rows],next_offset=offset+12 if offset+12<total else None)
 
     @app.post('/api/platform/projects')

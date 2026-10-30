@@ -1,3 +1,5 @@
+> The current UI refresh supersedes interface details below. Use [UPDATE_UI_REFRESH.md](UPDATE_UI_REFRESH.md) for the current package and Render installation. No persistent-data download is required for a code-only update.
+
 # AIM.movie — combined reliability and engagement update
 
 This package includes the earlier account and Runway updates. You do not need to install the older ZIPs first. It updates your existing Python/Flask app on port 8501 or Render; it does not move it to another hosting service.
@@ -13,8 +15,8 @@ This package includes the earlier account and Runway updates. You do not need to
 | Email | Optional encrypted SMTP delivery after the user confirms their email. Instant updates or a daily digest. Delivery failures retry without blocking submissions or decisions. |
 | Reviews | Available, claimed-by-me, claimed-by-others and history filters. Claiming clears the available-work alert for other reviewers. Creators never receive staff alerts for their own submissions. |
 | Saved and shared creations | Private Saved creations collection, published-post permanent links, phone share sheet where supported, and copy-link fallback. Unpublished posts cannot be viewed through shared links. |
-| Discover | Search titles/captions/tags/creators; filter creation type and sound; follow creators and browse Following. Duration, dimensions and sound information appear on posts. |
-| Viewer controls | Muted playback initially, an explicit sound control, and an in-page report form. Counts are labeled signed-in viewers and are recorded after playback begins, not when a card merely enters the screen. |
+| Discover | Search titles/captions/tags/creators; filter creation type; follow creators and browse Following. The current UI uses a single-video swipe player without technical metadata. |
+| Viewer controls | Sound on by default with a speaker toggle, a browser-required tap fallback, and an in-page report form. Counts are labeled signed-in viewers and are recorded after playback begins, not when a card merely enters the screen. |
 | Shot planning | No fixed 3–6-shot requirement. Continuous events can stay in one scene. Planning uses target length and the selected model’s limits, favors longer continuous takes and records reasons for cuts. Redundant matching adjacent beats can merge within supported durations. |
 | Production checks | Confirmation with a cost estimate and warnings about duration, changed plans, cast references and continuation mode. Invalid model/input combinations are blocked before a paid submission. |
 | Image references | Empty Alibaba identity-reference slots can use the saved cast/character sheets. Intentional uploaded/continuation references are retained. A new scene-starting-frame action composes a single frame using saved cast references for image-to-video workflows. |

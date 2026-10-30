@@ -66,7 +66,7 @@ def defaults(saved, cfg):
 def validate_settings(values):
     result = {}
     enums = {'video_provider': ('runway', 'alibaba'), 'wan_region': tuple(REGIONS),
-             'runway_model': runway_client.MODELS, 'runway_mode': ('first_frame', 'text'),
+            'runway_model': runway_client.MODELS, 'runway_mode': ('first_frame', 'text', 'reference'),
              'runway_start_slot': ('ref_a', 'ref_b'), 'runway_ratio': ('',) + runway_client.RATIOS,
              'runway_resolution': ('',) + runway_client.RESOLUTIONS,
              'wan_resolution': RESOLUTIONS, 'wan_mode': MODES, 'wan_start_slot': ('ref_a', 'ref_b')}

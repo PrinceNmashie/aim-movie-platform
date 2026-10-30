@@ -30,7 +30,7 @@ def planning_policy(vision,script,durations):
             'suggested_durations':suggested,'strategy':'Preserve scene boundaries and the requested action. Prefer fewer longer continuous takes. Split only when necessary; explain each cut. Exact target may be impossible for discrete model durations.'}
 
 def consolidate_shots(value,durations):
-    """Merge redundant adjacent beats only when their scene, cast and camera match."""
+    """Pack connected action beats into supported continuous takes, respecting real cuts."""
     choices=sorted(set(int(n) for n in durations));result=[]
     for raw in value.get('shots',[]):
         shot=dict(raw)
@@ -39,8 +39,13 @@ def consolidate_shots(value,durations):
         if not math.isfinite(n):n=choices[0]
         shot['duration_seconds']=min(choices,key=lambda v:(abs(v-n),-v))
         previous=result[-1] if result else None
-        if previous and not shot.get('cut_reason','').strip() and previous.get('scene_id')==shot.get('scene_id') and previous.get('camera','')==shot.get('camera','') and set(previous.get('characters',[]))==set(shot.get('characters',[])) and previous['duration_seconds']+shot['duration_seconds'] in choices:
+        reason=str(shot.get('cut_reason','')).casefold()
+        real_cut=any(term in reason for term in ('creator','user requested','hard cut','jump cut','reverse angle','camera cut','camera change','new camera angle','time jump','time change','location change','new location','different location','flashback'))
+        if previous and shot.get('scene_id') and not real_cut and previous.get('scene_id')==shot.get('scene_id') and previous['duration_seconds']+shot['duration_seconds'] in choices:
             previous['duration_seconds']+=shot['duration_seconds']
+            previous['characters']=list(dict.fromkeys([*previous.get('characters',[]),*shot.get('characters',[])]))
+            if shot.get('camera') and shot.get('camera')!=previous.get('camera'):
+                previous['camera']=str(previous.get('camera',''))+'; move smoothly into '+str(shot['camera'])+' within the same take'
             for f in ('on_screen_action','continuity','sound','prompt'):
                 previous[f]=' '.join(str(x).strip() for x in (previous.get(f,''),shot.get(f,'')) if x)
         else:result.append(shot)
@@ -155,7 +160,8 @@ def compile_shot(shot, vision, characters, video_settings=None):
         limit = runway_models.contract(video_settings)['prompt_max']
         def brief(value, length):
             return str(value or '').encode('utf-16-le')[:length*2].decode('utf-16-le', errors='ignore').strip()
-        start = 'Begin from the supplied first frame; preserve its visible cast and setting.' if video_settings.get('runway_mode') == 'first_frame' else 'One continuous cinematic shot.'
+        start = ('Begin from the supplied first frame; preserve its visible cast and setting.' if video_settings.get('runway_mode') == 'first_frame' else
+                 'Use the supplied images as character identity references only. Stage one cinematic shot; never show the reference sheet, labels or multiple views.' if video_settings.get('runway_mode') == 'reference' else 'One continuous cinematic shot.')
         lines = [start, 'Action: ' + brief(shot.get('on_screen_action'), 300),
                  'Camera: ' + brief(shot.get('camera'), 100),
                  'Continuity: ' + brief(shot.get('continuity'), 140),
