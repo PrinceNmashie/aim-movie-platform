@@ -16,7 +16,7 @@ REGIONS = {
     'cn-hongkong': 'China (Hong Kong)', 'cn-beijing': 'China (Beijing)',
 }
 RESOLUTIONS = ('480P', '720P', '1080P')
-SG_RATES = {'480P': .05, '720P': .10, '1080P': .20}
+SG_RATES = {'480P': .05, '720P': .07, '1080P': .20}
 GLOBAL_RATES = {'480P': .041256, '720P': .082513, '1080P': .165025}
 MODES = ('reference', 'first_frame', 'text')
 
