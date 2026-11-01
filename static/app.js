@@ -66,7 +66,7 @@ async function api(path, data) {
   let result;
   try { result = await response.json(); } catch { throw new Error('The server did not respond. Check that the studio is still running.'); }
   if (!response.ok) throw new Error(result.error || 'This action could not be completed.');
-  if(response.status===202 && result.task){AIMTasks.track(result.task);taskQueued=true;const state=await fetch('/api/state');if(!state.ok)throw new Error('Task accepted. Open Tasks to check its progress.');S=await state.json();return S;}
+  if(response.status===202 && result.task){AIMTasks.track(result.task);taskQueued=true;const state=await fetch('/api/state');if(!state.ok)throw new Error('Task accepted. Open Generation history to check its progress.');S=await state.json();return S;}
   S = result; return result;
 }
 async function run(label, work, options={}) {
@@ -144,6 +144,10 @@ function imagePreview(url,name) {
 function uploadButton(text, action, attrs='') {
   return `<label class="button ghost small upload-label">${text}<input type="file" accept="image/png,image/jpeg,image/webp" data-upload="${action}" ${attrs} aria-label="${esc(text)}"></label>`;
 }
+function characterReferenceChoice(c) {
+  const enabled=c.use_as_reference!==false;
+  return `<fieldset class="reference-choice"><legend>How should this image be used?</legend><label><input type="radio" name="character-reference-use" form="character-form" value="reference" ${enabled?'checked':''}><span><strong>Use as character reference</strong><small>Guide this character’s appearance without making the image the opening frame.</small></span></label><label><input type="radio" name="character-reference-use" form="character-form" value="save_only" ${!enabled?'checked':''}><span><strong>Save only</strong><small>Keep the image here without sending it to video generation.</small></span></label><p class="hint">Your choice carries into Render, where you can review it before generating. Character images are optional.</p></fieldset>`;
+}
 function characters() {
   if (!S.characters.length) {
     return heading('03 / THE CAST','Meet your characters.','Turn the conversation into editable character profiles and visual reference sheets.',badge(S.statuses.characters)) + noKey() +
@@ -159,7 +163,8 @@ function characters() {
     <section class="panel"><div class="panel-title"><div><div class="subtle-label">VISUAL REFERENCE</div><h3>Character sheet</h3></div>${image ? `<a class="button ghost small" href="${esc(c.image_url)}" download="${esc(c.name)}-sheet.png">Download</a>` : '<span class="badge">No image yet</span>'}</div>${imagePreview(c.image_url,c.name)}
     ${c.image_outdated ? notice('Your profile changed after this image was made. Edit the image or generate a new sheet to match the latest details.') : ''}
     <div class="image-actions">${button(c.image_url ? 'Generate new version' : 'Generate character sheet','generate-image','primary',!S.configured.openai ? 'disabled' : '')}${uploadButton('Upload a sheet','character-sheet')}</div>${adminInfo(`<p class="image-credit">Image model: ${esc(S.settings.image_model)} · ${esc(S.settings.image_quality)} quality · Uses your OpenAI API</p>`)}
-    ${c.images?.length ? `<div class="versions" aria-label="Previous image versions">${c.images.map((v,i)=>`<button class="version ${v.id===c.current_image ? 'active' : ''}" data-action="select-image" data-id="${esc(v.id)}"><img src="${esc(v.url)}" alt="Sheet version ${i+1}"><span>Version ${i+1}</span></button>`).join('')}</div><div class="reference-selected">Selected character reference</div><details class="reference-tools"><summary>Refine this image</summary><label class="field"><span>What should change?</span><textarea id="image-correction" rows="3" placeholder="Keep the face and outfit, but make the hair shorter and fix the side view."></textarea></label><div class="row" style="margin-top:12px">${button('Apply image correction','edit-image','secondary',!S.configured.openai ? 'disabled' : '')}</div><p class="hint">Your earlier version stays saved.</p></details>` : ''}
+    ${characterReferenceChoice(c)}
+    ${c.images?.length ? `<div class="versions" aria-label="Previous image versions">${c.images.map((v,i)=>`<button class="version ${v.id===c.current_image ? 'active' : ''}" data-action="select-image" data-id="${esc(v.id)}"><img src="${esc(v.url)}" alt="Sheet version ${i+1}"><span>Version ${i+1}</span></button>`).join('')}</div><details class="reference-tools"><summary>Refine this image</summary><label class="field"><span>What should change?</span><textarea id="image-correction" rows="3" placeholder="Keep the face and outfit, but make the hair shorter and fix the side view."></textarea></label><div class="row" style="margin-top:12px">${button('Apply image correction','edit-image','secondary',!S.configured.openai ? 'disabled' : '')}</div><p class="hint">Your earlier version stays saved.</p></details>` : ''}
     <details class="details"><summary>Add an identity photo</summary>${c.reference_photo_url ? `<div class="reference-photo"><img src="${esc(c.reference_photo_url)}" alt="Identity photo"><div><strong>Reference photo saved</strong><p>Included in future sheet generation and image corrections.</p></div></div>` : '<p class="hint" style="margin-bottom:12px">Upload a photo or character portrait. MIA will include it as an identity reference when generating the sheet.</p>'}${uploadButton('Upload identity photo','character-photo')}</details></section></div>
     <details class="panel ensemble-section"><summary>Combined cast reference</summary><div class="panel-title"><div><h3>A single sheet for the whole cast</h3><p>Combine the edited profiles and their selected images into one reference.</p></div>${button(S.ensemble.image_url ? 'Generate new cast sheet' : 'Build combined cast sheet','ensemble','secondary',!S.configured.openai ? 'disabled' : '')}</div>${S.ensemble.image_url ? `${imagePreview(S.ensemble.image_url,'Combined cast')}<div class="versions" aria-label="Cast-sheet versions">${S.ensemble.images.map((v,i)=>`<button class="version ${v.id===S.ensemble.current_image ? 'active' : ''}" data-action="select-ensemble-image" data-id="${esc(v.id)}"><img src="${esc(v.url)}" alt="Cast sheet version ${i+1}"><span>Version ${i+1}</span></button>`).join('')}</div><div class="row wrap"><span class="reference-selected">Available for shots with this cast</span><a class="button ghost small" href="${esc(S.ensemble.image_url)}" download="cast-sheet.png">Download</a></div><div class="details">${field('What should change in the cast sheet?','','ensemble_correction',{area:true,rows:2,placeholder:'Make the characters more distinct. Keep both outfits and faces.'})}<div style="margin-top:12px">${button('Apply cast-sheet correction','edit-ensemble','secondary',!S.configured.openai ? 'disabled' : '')}</div></div>` : '<p class="hint">Useful when your video needs multiple distinct characters in the same reference image.</p>'}</details>
     ${reviewFooter('Happy with your cast?','Images can be refined later. Your edited profiles carry into the script and shot plan.','brief','approve-characters','Approve & continue to script')}`;
@@ -192,12 +197,15 @@ function renderPage() {
   const checks=wan?[[S.configured.alibaba,'Alibaba connection'],[true,'Wan 3.0 · 2–30 seconds']]:[[S.configured.runway,'Runway connection'],[true,runwayModel()?.name||'Selected model']];
   const connected=wan?S.configured.alibaba:S.configured.runway;
   return heading('06 / PRODUCTION','Bring your shot to life.','Choose a model, set the action, and generate.',link('Video library','library','ghost small'))+
-    providerPanel()+durationNote+(!connected?notice(isAdmin()?`Configure your ${wan?'Alibaba':'Runway Developer'} connection. ${link('Open settings','settings','ghost small')}`:'This generator is temporarily unavailable. Please choose another.'):'')+
+    providerPanel()+characterReferenceSummary()+durationNote+(!connected?notice(isAdmin()?`Configure your ${wan?'Alibaba':'Runway Developer'} connection. ${link('Open settings','settings','ghost small')}`:'This generator is temporarily unavailable. Please choose another.'):'')+
     (S.prompt_needs_refresh&&S.render_prompt?notice('Your project changed. Review the prompt before generating.'):'')+continuationPanel()+
     `<div class="render-layout"><section class="panel"><div class="panel-title"><h3>The shot</h3><span class="badge">${wan?'Wan 3.0':esc(runwayModel()?.name||'Runway')}</span></div>
     ${shots.length?`<div class="row" style="margin-bottom:22px"><label class="field" style="flex:1"><span>Planned shot</span><select id="render-shot"><option value="">Select a shot…</option>${shots.map(s=>`<option value="${esc(s.id)}" ${S.selected_shot===s.id?'selected':''}>${esc(s.id+' · '+s.shot_type+' · '+s.duration_seconds+' sec')}</option>`).join('')}</select></label>${button('Build prompt','compile-shot','secondary','style="margin-top:23px"')}</div>`:''}
     ${field('Video prompt',S.render_prompt,'render_prompt',{area:true,rows:10,placeholder:'Describe the action, setting and camera movement.'})}
-    <div class="render-options"><label>Length <select id="render-duration">${choices.map(n=>`<option value="${n}" ${n===Number(S.render_duration)?'selected':''}>${n} seconds</option>`).join('')}</select><strong id="duration-value" hidden>${S.render_duration}s</strong></label><span class="badge" id="runway-prompt-count"></span></div>
+    <div class="render-options"><label>Length <select id="render-duration">${choices.map(n=>`<option value="${n}" ${n===Number(S.render_duration)?'selected':''}>${n} seconds</option>`).join('')}</select><strong id="duration-value" hidden>${S.render_duration}s</strong></label><span class="badge" id="runway-prompt-count" hidden></span></div>
+    <!-- GENERATION_TIME_ESTIMATE_ELEMENT: remove this comment wrapper to enable.
+    <p class="hint" id="generation-time-estimate" hidden></p>
+    -->
     ${adminInfo(`<p class="hint">${wan?'Wan uses whole seconds. In image-reference mode, refer to supplied images as Image 1 and Image 2.':`Selected model: ${esc(prefs.runway_model)}. Prompt limit: ${runwaySpec().prompt_max} UTF-16 units.`}</p>`)}
     <div class="row between wrap" style="margin-top:25px">${button('Save prompt','save-render','secondary')}${button('Generate video <span class="arrow">→</span>','submit-render','primary',`id="render-generate" ${!videoReady()?'disabled':''}`)}</div>${adminInfo(`<p class="hint">Generate submits a paid request to ${wan?'Alibaba Model Studio':'Runway Developer'}. Review the estimate above first.</p>`)}</section>
     <aside class="render-preview">${(wan?prefs.wan_mode:prefs.runway_mode)==='first_frame'?`<div class="row wrap" style="margin-bottom:16px">${button('Create scene starting frame','create-first-frame','secondary small',!S.selected_shot||!S.configured.openai?'disabled':'')}</div>`:''}${['ref_a','ref_b'].map((slot,i)=>`<div class="ref-slot"><strong>${referenceRole(slot)} ${S.references[slot].binding?.character_id?' · '+esc(S.characters.find(c=>c.id===S.references[slot].binding.character_id)?.name||''):''}</strong><div class="sheet-view">${S.references[slot].url?`<img src="${esc(S.references[slot].url)}" alt="Picture ${i+1}">`:'<span class="muted">No image selected</span>'}</div><div class="row">${uploadButton('Upload reference','reference',`data-slot="${slot}"`)}${S.references[slot].url?button('Clear reference','clear-ref','ghost small',`data-slot="${slot}"`):''}${link('Manage characters','characters','ghost small')}</div></div>`).join('')}
@@ -296,7 +304,7 @@ function collectShots() {
   });return director;
 }
 async function saveCharacter() {
-  if ($('#character-form')) await api('characters/'+currentCID,collectFields($('#character-form')));
+  if ($('#character-form')) {const values=collectFields($('#character-form')),choice=$('[name="character-reference-use"]:checked');if(choice?.name==='character-reference-use')values.use_as_reference=choice.value==='reference';await api('characters/'+currentCID,values); }
 }
 function sequenceOptions() {
   return {name:$('[data-field="sequence_name"]').value.trim() || 'Untitled scene',clip_ids:[...S.sequence.clip_ids]};
@@ -416,7 +424,10 @@ async function handleAction(action,el) {
       if(dirty && $('[data-field="render_prompt"]').value.trim() && !await confirmAction('Replace the current prompt?','The selected shot and its character identities will build a new prompt. Save your current prompt first if you want to keep your edits.','Build prompt')) return;
       return run('Building the video prompt…',()=>api('render/compile',{shot_id:$('#render-shot').value}),{message:'Prompt ready to review.'});
     case 'save-render':return run('Saving the video prompt…',()=>api('render/save',renderOptions()),{message:'Prompt saved.'});
-    case 'choose-reference-model':return run('Selecting a reference model…',()=>api('settings',{runway_model:'wan3',runway_mode:'reference'}));
+    case 'use-text-only':return changeVideoOption({dataset:{videoOption:S.settings.video_provider==='alibaba'?'wan_mode':'runway_mode'},value:'text',type:'select-one'});
+    case 'use-image-references':return changeVideoOption({dataset:{videoOption:S.settings.video_provider==='alibaba'?'wan_mode':'runway_mode'},value:'reference',type:'select-one'});
+    case 'choose-text-model':return changeVideoModel('gen4.5','text');
+    case 'choose-reference-model':return changeVideoModel('wan3','reference');
     case 'create-first-frame':return run('Creating your starting frame…',()=>api('render/first-frame',{}),{message:'Starting frame ready.'});
     case 'submit-render': {
       const options=renderOptions();const r=await AIMTasks.request('render/preflight',{method:'POST',headers:{'Content-Type':'application/json','X-AIM-Token':token,'X-Workspace-ID':S.workspace_id},body:JSON.stringify(options)},S.workspace_id);
@@ -494,6 +505,7 @@ document.addEventListener('change',async event=>{
   const input=event.target;
   if(input.name==='source'&&input.closest('#share-form')){changeReviewSource(input);return;}
   if(input.id==='platform-project'){if(dirty&&!window.confirm('Switch projects and discard unsaved edits?'))return;await AIMVoice.stop();await portalRequest('platform/projects/select',{id:input.value});location.href='/';return;}
+  if(input.name==='character-reference-use'){await run('Saving image choice…',saveCharacter);return;}
   if(input.hasAttribute('data-runway-quality')){await changeRunwayQuality(input);return;}
   if(input.dataset.videoOption){await changeVideoOption(input);return;}
   if(input.id==='voice-read-replies'){

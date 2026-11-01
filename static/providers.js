@@ -58,9 +58,29 @@ async function changeRunwayQuality(input){
  const updates=runwaySpec().resolutions.length?{runway_resolution:group.id}:{};if(ratio)updates.runway_ratio=ratio;
  const draft=renderOptions();await run('Updating quality…',async()=>{await api('settings',updates);S.render_prompt=draft.prompt;S.render_duration=fitVideoDuration(draft.duration);},{keepDirty:true});
 }
+async function changeVideoModel(model,mode){
+ const draft=renderOptions(),nextAction=$('[data-field="next_action"]')?.value;
+ await run('Updating your model…',async()=>{await api('settings',{runway_model:model,runway_mode:mode});S.render_prompt=draft.prompt;S.render_duration=fitVideoDuration(draft.duration);if(nextAction!=null)S.continuation={...S.continuation,next_action:nextAction};},{keepDirty:true});
+}
+function characterReferenceSummary(){
+ const p=S.settings,mode=p.video_provider==='alibaba'?p.wan_mode:p.runway_mode;
+ const shot=S.director.shots?.find(x=>x.id===S.selected_shot),wanted=shot?.characters?.map(x=>String(x).toLowerCase());
+ const cast=S.characters.filter(c=>!wanted?.length||wanted.includes(c.id.toLowerCase())||wanted.includes(c.name.toLowerCase()));
+ const selected=cast.filter(c=>c.use_as_reference!==false&&c.image_url),saved=cast.filter(c=>c.use_as_reference===false&&c.image_url);
+ if(!selected.length&&!saved.length)return '';
+ const canReference=p.video_provider==='alibaba'||!!runwayModel()?.modes.reference,canText=p.video_provider==='alibaba'||!!runwayModel()?.modes.text;
+ const names=chars=>chars.map(c=>esc(c.name)).join(', ');
+ let note='',action='';
+ if(selected.length){
+  if(mode==='reference')note='<p>Your selected images guide appearance, without becoming the opening frame. Build the shot prompt to attach them.</p>';
+  else{note='<p class="reference-warning">Your current image-use setting does not send these as character references.</p>';action=canReference?button('Use selected references','use-image-references','secondary small'):button('Choose a reference-compatible model','choose-reference-model','secondary small');}
+ }else if(mode!=='text'&&canText){note='<p>All character images for this shot are saved only. Choose Text only to generate without them, or upload a separate reference below.</p>';action=button('Use text only','use-text-only','secondary small');}
+ if(!selected.length&&mode!=='text'&&!canText){note='<p class="reference-warning">This model requires an opening scene image. Create a scene frame below or choose a model that supports Text only.</p>';action=button('Choose a text-only model','choose-text-model','secondary small');}
+ return `<section class="reference-summary" aria-label="Character image choices"><h3>Character image choices</h3>${selected.length?`<p><strong>Use as references:</strong> ${names(selected)}</p>`:''}${saved.length?`<p><strong>Saved only:</strong> ${names(saved)}</p>`:''}${note}<div class="row wrap">${action}${link('Change character choices','characters','ghost small')}</div></section>`;
+}
 function providerPanel(){
  const p=S.settings,wan=p.video_provider==='alibaba';
- return `<section class="panel provider-panel"><div class="panel-title"><h3>Video generator</h3><span class="badge">Per second</span></div><div class="provider-grid">${[['runway','Runway','25 models'],['alibaba','Alibaba','Wan 3.0 · 2–30 seconds']].map(([id,name,copy])=>`<label class="provider-card ${p.video_provider===id?'selected':''}"><div class="row between"><strong>${name}</strong><input type="radio" name="video-provider" data-video-option="video_provider" value="${id}" ${p.video_provider===id?'checked':''}></div><p>${copy}</p><strong class="provider-price" id="provider-cost-${id}"></strong><small id="provider-math-${id}"></small></label>`).join('')}</div>${wan?`<div class="field-grid provider-options"><label class="field"><span>Quality</span><select data-video-option="wan_resolution">${['480P','720P','1080P'].map(r=>`<option ${r===p.wan_resolution?'selected':''}>${r.toLowerCase()}</option>`).join('')}</select></label><label class="field"><span>Start with</span><select data-video-option="wan_mode">${[['reference','Image references'],['first_frame','A starting frame'],['text','Text']].map(([value,label])=>`<option value="${value}" ${value===p.wan_mode?'selected':''}>${label}</option>`).join('')}</select></label>${p.wan_mode==='first_frame'?`<label class="field"><span>Starting frame</span><select data-video-option="wan_start_slot"><option value="ref_a" ${p.wan_start_slot==='ref_a'?'selected':''}>Picture 1</option><option value="ref_b" ${p.wan_start_slot==='ref_b'?'selected':''}>Picture 2</option></select></label>`:''}</div><div class="row wrap provider-toggles"><label><input type="checkbox" data-video-option="wan_audio" ${p.wan_audio?'checked':''}>Generate sound</label>${adminInfo(`<label><input type="checkbox" data-video-option="wan_prompt_extend" ${p.wan_prompt_extend?'checked':''}>Let Wan expand the prompt</label>`)}</div>`:runwayOptions()}<div class="price-summary"><div><span class="subtle-label">ESTIMATED GENERATION COST</span><strong id="selected-video-cost"></strong>${adminInfo('<p id="selected-video-math"></p>')}</div>${isAdmin()?link('Provider settings','settings','ghost small'):''}</div>${adminInfo(`<p class="hint">Runway estimates checked ${esc(S.providers.runway_pricing_checked)}; Wan estimates checked ${esc(S.providers.pricing_checked)}. Provider list-price estimates, not invoices. Input charges, minimums, credit rounding and current promotions are included where applicable. Taxes and account-specific discounts may differ. <a href="${esc(S.providers.runway_pricing_url)}" target="_blank" rel="noopener">Runway API pricing ↗</a> · <a href="${esc(S.providers.wan_pricing_url)}" target="_blank" rel="noopener">Wan pricing ↗</a></p>`)}</section>`;
+ return `<section class="panel provider-panel"><div class="panel-title"><h3>Video generator</h3><span class="badge">Per second</span></div><div class="provider-grid">${[['runway','Runway','25 models'],['alibaba','Alibaba','Wan 3.0 · 2–30 seconds']].map(([id,name,copy])=>`<label class="provider-card ${p.video_provider===id?'selected':''}"><div class="row between"><strong>${name}</strong><input type="radio" name="video-provider" data-video-option="video_provider" value="${id}" ${p.video_provider===id?'checked':''}></div><p>${copy}</p><strong class="provider-price" id="provider-cost-${id}"></strong><small id="provider-math-${id}"></small></label>`).join('')}</div>${wan?`<div class="field-grid provider-options"><label class="field"><span>Quality</span><select data-video-option="wan_resolution">${['480P','720P','1080P'].map(r=>`<option value="${r}" ${r===p.wan_resolution?'selected':''}>${r.toLowerCase()}</option>`).join('')}</select></label><label class="field"><span>Start with</span><select data-video-option="wan_mode">${[['reference','Image references'],['first_frame','A starting frame'],['text','Text']].map(([value,label])=>`<option value="${value}" ${value===p.wan_mode?'selected':''}>${label}</option>`).join('')}</select></label>${p.wan_mode==='first_frame'?`<label class="field"><span>Starting frame</span><select data-video-option="wan_start_slot"><option value="ref_a" ${p.wan_start_slot==='ref_a'?'selected':''}>Picture 1</option><option value="ref_b" ${p.wan_start_slot==='ref_b'?'selected':''}>Picture 2</option></select></label>`:''}</div><div class="row wrap provider-toggles"><label><input type="checkbox" data-video-option="wan_audio" ${p.wan_audio?'checked':''}>Generate sound</label>${adminInfo(`<label><input type="checkbox" data-video-option="wan_prompt_extend" ${p.wan_prompt_extend?'checked':''}>Let Wan expand the prompt</label>`)}</div>`:runwayOptions()}<div class="price-summary"><div><span class="subtle-label">ESTIMATED GENERATION COST</span><strong id="selected-video-cost"></strong>${adminInfo('<p id="selected-video-math"></p>')}</div>${isAdmin()?link('Provider settings','settings','ghost small'):''}</div>${adminInfo(`<p class="hint">Runway estimates checked ${esc(S.providers.runway_pricing_checked)}; Wan estimates checked ${esc(S.providers.pricing_checked)}. Provider list-price estimates, not invoices. Input charges, minimums, credit rounding and current promotions are included where applicable. Taxes and account-specific discounts may differ. <a href="${esc(S.providers.runway_pricing_url)}" target="_blank" rel="noopener">Runway API pricing ↗</a> · <a href="${esc(S.providers.wan_pricing_url)}" target="_blank" rel="noopener">Wan pricing ↗</a></p>`)}</section>`;
 }
 function updateVideoPricing(){
  if(page!=='render'||!S)return;
@@ -74,8 +94,10 @@ function updateVideoPricing(){
  if(cost)cost.textContent=usd(q.total);
  if(math&&isAdmin())math.textContent=q.total==null?'Unsupported duration.':seconds+' generated seconds × '+usd(q.rate,6)+'/second'+(q.credits!=null?' · '+q.credits+' developer credits (including applicable image charges, minimums and rounding)':'');
  const count=($('[data-field="render_prompt"]')?.value||'').length,spec=S.settings.video_provider==='runway'?runwaySpec():{prompt_min:1,prompt_max:20000},units=$('#runway-prompt-count');
- if(units)units.textContent=count+' / '+spec.prompt_max;
+ if(units){units.hidden=count<=spec.prompt_max;units.textContent=count>spec.prompt_max?'Your prompt is too long. Shorten it before generating.':'';}
  const generate=$('#render-generate');if(generate)generate.disabled=!videoReady()||!durationChoices().includes(seconds)||count<spec.prompt_min||count>spec.prompt_max;
+ // GENERATION_TIME_ESTIMATE_ENABLE: uncomment after adding measured samples and enabling the helper block/HTML element.
+ // updateGenerationTimeEstimate(seconds);
 }
 function jobCost(job){
  const q=job.cost_estimate;if(!q||!isAdmin())return '';
@@ -101,3 +123,27 @@ async function changeVideoOption(input){
  const draft=renderOptions(),nextAction=$('[data-field="next_action"]')?.value;
  await run('Updating your selection…',async()=>{await api('settings',{[field]:value});S.render_prompt=draft.prompt;S.render_duration=fitVideoDuration(draft.duration);if(nextAction!=null)S.continuation={...S.continuation,next_action:nextAction};},{keepDirty:true});
 }
+
+/* GENERATION_TIME_ESTIMATE_HELPERS_START
+// Inactive until this entire block is uncommented. No guessed timings are used.
+// Enter measured wall-clock seconds for the sample clip length, including queue time.
+// Use the same provider, model, region, input mode and quality you measured.
+const GENERATION_TIME_SAMPLES = {
+ 'alibaba|wan3.0-video|ap-southeast-1|reference|720P': {clipSeconds:null,fastSeconds:null,slowSeconds:null},
+ 'alibaba|wan3.0-video|ap-southeast-1|reference|1080P': {clipSeconds:null,fastSeconds:null,slowSeconds:null},
+ // Add other measured combinations as needed, for example:
+ // 'runway|wan3||reference|1280:720': {clipSeconds:null,fastSeconds:null,slowSeconds:null},
+};
+function updateGenerationTimeEstimate(seconds){
+ const element=$('#generation-time-estimate');if(!element)return;
+ const p=S.settings,wan=p.video_provider==='alibaba';
+ const key=[p.video_provider,wan?'wan3.0-video':p.runway_model,wan?p.wan_region:'',wan?p.wan_mode:p.runway_mode,wan?p.wan_resolution:(p.runway_resolution||p.runway_ratio)].join('|');
+ const sample=GENERATION_TIME_SAMPLES[key];
+ if(!sample||![seconds,sample.clipSeconds,sample.fastSeconds,sample.slowSeconds].every(n=>typeof n==='number'&&Number.isFinite(n)&&n>0)||sample.fastSeconds>sample.slowSeconds){element.hidden=true;element.textContent='';return;}
+ // Approximate scaling from a measured sample; this is a range, not a countdown.
+ const low=Math.max(1,Math.ceil(sample.fastSeconds*seconds/sample.clipSeconds/60));
+ const high=Math.max(low,Math.ceil(sample.slowSeconds*seconds/sample.clipSeconds/60));
+ element.textContent='Estimated generation time: about '+(low===high?low:low+'–'+high)+' '+(high===1?'minute':'minutes')+'.';
+ element.hidden=false;
+}
+GENERATION_TIME_ESTIMATE_HELPERS_END */
