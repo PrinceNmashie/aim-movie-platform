@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from flask import abort, jsonify, redirect, request
 import store
 
-EVENTS = {'review_available', 'review_assigned', 'review_reminder', 'review_decision', 'creation_ready', 'creation_failed'}
+EVENTS = {'clip_ready'}
 STAFF_EVENTS = {'review_available', 'review_assigned', 'review_reminder'}
 
 def portal():
@@ -32,7 +32,9 @@ def settings(uid, c=None):
     if c is None:
         with portal().db() as c:return settings(uid,c)
     row=c.execute('SELECT * FROM notification_preferences WHERE user_id=?',(uid,)).fetchone()
-    return {'events':json.loads(row['events']) if row else sorted(EVENTS),
+    previous = json.loads(row['events']) if row else ['clip_ready']
+    events = ['clip_ready'] if 'clip_ready' in previous or 'creation_ready' in previous else []
+    return {'events':events,
             'email_enabled':bool(row and row['email_enabled']), 'frequency':row['frequency'] if row else 'instant',
             'verified':bool(row and row['verified']), 'email_available':email_available()}
 
@@ -41,6 +43,7 @@ def email_available():
     return bool(os.getenv('AIM_SMTP_HOST') and os.getenv('AIM_EMAIL_FROM') and urlparse(base).scheme=='https' and urlparse(base).netloc)
 
 def add(c,uid,kind,title,link,subject='',dedupe=None):
+    if kind != 'clip_ready':return
     prefs=settings(uid,c)
     if kind not in prefs['events']:return
     account=c.execute('SELECT role FROM users WHERE id=?',(uid,)).fetchone()
@@ -65,6 +68,7 @@ def task_event(uid,tid,title,link,failed=False):
     with portal().db() as c:add(c,uid,'creation_failed' if failed else 'creation_ready',title,link,tid,'task:'+tid)
 
 def valid_notice(c,n):
+    if n['kind'] != 'clip_ready':return False
     account=c.execute('SELECT role FROM users WHERE id=?',(n['user_id'],)).fetchone()
     if not account:return False
     if n['kind'] not in STAFF_EVENTS:return True
@@ -138,9 +142,9 @@ def install(app):
         with portal().db() as c:
             for n in c.execute("SELECT * FROM notifications WHERE user_id=? AND kind IN ('review_available','review_assigned','review_reminder') AND read_at IS NULL",(uid,)).fetchall():
                 if not valid_notice(c,n):c.execute('UPDATE notifications SET read_at=? WHERE id=?',(store.now(),n['id']))
-            rows=c.execute('SELECT id,kind,title,link,created,read_at FROM notifications WHERE user_id=? ORDER BY created DESC,rowid DESC LIMIT 20 OFFSET ?',(uid,offset)).fetchall()
-            total=c.execute('SELECT count(*) FROM notifications WHERE user_id=?',(uid,)).fetchone()[0]
-            unread=c.execute('SELECT count(*) FROM notifications WHERE user_id=? AND read_at IS NULL',(uid,)).fetchone()[0]
+            rows=c.execute("SELECT id,kind,title,link,created,read_at FROM notifications WHERE user_id=? AND kind='clip_ready' ORDER BY created DESC,rowid DESC LIMIT 20 OFFSET ?",(uid,offset)).fetchall()
+            total=c.execute("SELECT count(*) FROM notifications WHERE user_id=? AND kind='clip_ready'",(uid,)).fetchone()[0]
+            unread=c.execute("SELECT count(*) FROM notifications WHERE user_id=? AND kind='clip_ready' AND read_at IS NULL",(uid,)).fetchone()[0]
         return jsonify(items=[dict(r) for r in rows],unread=unread,next_offset=offset+20 if offset+20<total else None)
 
     @app.post('/api/account/notifications/read')

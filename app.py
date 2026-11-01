@@ -512,13 +512,24 @@ def skip_characters():
 def edit_character(cid):
     value, char = character(cid)
     updated = body()
+    if 'use_as_reference' in updated and not isinstance(updated['use_as_reference'], bool):
+        raise ValueError('Choose whether this image should be used as a character reference.')
+    reference_changed = 'use_as_reference' in updated and updated['use_as_reference'] != char.get('use_as_reference', True)
     before = {field: char.get(field, '') for field in studio.CHAR_FIELDS}
     for field in studio.CHAR_FIELDS:
         if field in updated:
             char[field] = str(updated[field])[:20000]
+    if 'use_as_reference' in updated:
+        char['use_as_reference'] = updated['use_as_reference']
     if before != {field: char.get(field, '') for field in studio.CHAR_FIELDS}:
         char['manually_edited'] = True
         studio.save('characters', value, 'Creator edited ' + char['name'])
+    elif reference_changed:
+        store.put('characters', value)
+    if reference_changed:
+        clear_excluded_references()
+        store.put('prompt_needs_refresh', True)
+        store.record('References', 'Creator chose ' + ('reference use' if char['use_as_reference'] else 'save only') + ' for ' + char['name'])
     return jsonify(snapshot())
 
 @app.post('/api/characters/<cid>/delete')
@@ -669,10 +680,14 @@ def reference(slot):
         cid = options.get('character_id')
         if cid:
             _, char = character(cid)
+            if not char.get('use_as_reference', True):
+                raise ValueError('This character image is set to Save only. Choose Use as character reference first.')
             current = studio.selected_image(char)
             path = current.get('path') if current else None
-            binding = {'character_id': cid, 'image_id': current['id']} if current else {}
+            binding = {'kind': 'character', 'character_id': cid, 'image_id': current['id']} if current else {}
         else:
+            if any(not c.get('use_as_reference', True) for c in characters_value()['characters']):
+                raise ValueError('The combined cast image includes a character set to Save only. Use individual character references instead.')
             ensemble = store.get('ensemble', {})
             current = next((v for v in ensemble.get('images', []) if v['id'] == ensemble.get('current_image')), None)
             path = current.get('path') if current else None
@@ -717,15 +732,38 @@ def compile_prompt():
     store.put('prompt_needs_refresh', False)
     return jsonify(snapshot())
 
+def excluded_reference_paths():
+    chars = characters_value()['characters']
+    excluded = {v.get('path') for c in chars if not c.get('use_as_reference', True) for v in c.get('images', [])}
+    if any(not c.get('use_as_reference', True) for c in chars):
+        excluded.update(v.get('path') for v in store.get('ensemble', {}).get('images', []))
+    return {path for path in excluded if path}
+
+def clear_excluded_references():
+    """Remove only reference bindings excluded by an explicit Save only choice."""
+    excluded = excluded_reference_paths()
+    disabled = {c['id'] for c in characters_value()['characters'] if not c.get('use_as_reference', True)}
+    bindings = store.get('reference_bindings', {})
+    for slot in ('ref_a', 'ref_b'):
+        binding = bindings.get(slot, {})
+        if (binding.get('character_id') in disabled or
+            binding.get('kind') != 'upload' and store.get(slot) in excluded or
+            binding.get('kind') == 'ensemble' and disabled):
+            store.put(slot, '')
+            bindings.pop(slot, None)
+    store.put('reference_bindings', bindings)
+
 def attach_references(shot):
     """Refresh automatically selected identities; preserve intentional uploads and frames."""
     prefs=preferences()
     mode=prefs['wan_mode'] if prefs['video_provider']=='alibaba' else prefs['runway_mode']
+    clear_excluded_references()
     if mode!='reference':return
     wanted={str(x).casefold() for x in shot.get('characters',[])}
-    cast=[c for c in characters_value()['characters'] if not wanted or c['id'].casefold() in wanted or c['name'].casefold() in wanted]
+    all_cast=characters_value()['characters']
+    cast=[c for c in all_cast if c.get('use_as_reference', True) and (not wanted or c['id'].casefold() in wanted or c['name'].casefold() in wanted)]
     ensemble=store.get('ensemble',{});combined=next((v for v in ensemble.get('images',[]) if v['id']==ensemble.get('current_image')),None)
-    candidates=[(combined['path'],{'kind':'ensemble','image_id':combined['id']})] if len(cast)>1 and combined and asset_path(combined.get('path')) else []
+    candidates=[(combined['path'],{'kind':'ensemble','image_id':combined['id']})] if len(cast)>1 and all(c.get('use_as_reference', True) for c in all_cast) and combined and asset_path(combined.get('path')) else []
     for c in cast:
         image=studio.selected_image(c)
         if image and asset_path(image.get('path')):candidates.append((image['path'],{'kind':'character','character_id':c['id'],'image_id':image['id']}))
@@ -744,6 +782,7 @@ def attach_references(shot):
 def render_preflight(options):
     errors=[];warnings=[]
     try:
+        clear_excluded_references()
         settings=video_providers.options(options,preferences());prompt=str(options.get('prompt','')).strip()
         if not prompt:raise ValueError('Add a video prompt first.')
         images={slot:asset_path(store.get(slot)) for slot in ('ref_a','ref_b')}
@@ -767,7 +806,7 @@ def render_preflight(options):
             binding=store.get('reference_bindings',{}).get(slot,{})
             if binding.get('kind') in ('character','ensemble'):errors.append('This image is a character reference sheet, not an opening frame. Choose Image references with a supported model, or create a scene opening frame.')
             if binding.get('kind')=='scene_frame' and shot and binding.get('shot_id')!=shot['id']:warnings.append('Your starting frame belongs to another shot. Check the composition before continuing.')
-        elif mode=='text' and characters_value()['characters']:warnings.append('Text-only generation does not send your character images. Identity may vary between clips.')
+        elif mode=='text' and any(c.get('use_as_reference', True) and studio.selected_image(c) for c in characters_value()['characters']):warnings.append('Text-only generation does not send your selected character references. Choose Image references to use them.')
         if store.get('continuation',{}).get('source_job_id') and mode=='text':warnings.append('This continuation uses text only. Select starting-frame mode to carry forward the previous clip’s last frame.')
         return {'errors':errors,'warnings':warnings,'estimate':video_providers.quote(settings,settings['duration'])}
     except ValueError as exc:return {'errors':[str(exc)],'warnings':warnings,'estimate':None}
@@ -782,7 +821,7 @@ def check_render():
 def create_scene_frame():
     shot=next((s for s in store.get('director',{}).get('shots',[]) if s['id']==store.get('selected_shot')),None)
     if not shot:raise ValueError('Choose a shot and build its prompt first.')
-    chars=characters_value();refs=[asset_path(studio.selected_image(c).get('path')) for c in chars['characters'] if studio.selected_image(c)]
+    chars=characters_value();refs=[asset_path(studio.selected_image(c).get('path')) for c in chars['characters'] if c.get('use_as_reference', True) and studio.selected_image(c)]
     refs=[p for p in refs if p][:8];prefs=preferences()
     prompt='Create ONE cinematic starting frame for an upcoming continuous shot, before its main action begins. Match the supplied character references, distinct faces, wardrobes and setting. Show a single camera view, never a sheet, montage or multiple panels. No text. Preserve screen positions.\n'+studio.compile_shot(shot,store.get('vision',{}),chars,{'video_provider':'alibaba','wan_mode':'text'})
     path=save_image(ai_layers.image(cfg('OPENAI_API_KEY'),prefs['image_model'],prompt,prefs['image_quality'],refs))

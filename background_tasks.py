@@ -145,7 +145,41 @@ def schedule_watch(uid,pid,workspace,jid):
         c.execute('INSERT OR IGNORE INTO background_tasks(id,user_id,project_id,workspace_id,endpoint,path,arguments,input_path,content_type,fingerprint,idempotency_key,status,kind,label,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                   (uuid.uuid4().hex,uid,pid,workspace,'refresh_job',path,json.dumps({'jid':jid}),'','application/json',jid,'watch:'+pid+':'+jid,'waiting','watch','Video generation',now,now))
 
+def clip_ready(job, directory):
+    return bool(job and job[3]=='COMPLETED' and job[5] and not job[5].startswith(('http://','https://')) and (directory/Path(job[5]).name).is_file())
+
+def notify_clip_ready(c, t):
+    jid=json.loads(t['arguments'])['jid']
+    notifications.add(c,t['user_id'],'clip_ready','Video generation is ready.',destination(t),jid,'clip:'+t['project_id']+':'+jid)
+
+def repair_unfinished_watch_records(uid=None):
+    """Repair the prior monitor bug using saved job state. Never resubmit video work."""
+    with portal().db() as c:
+        query="SELECT t.* FROM background_tasks t JOIN projects p ON p.id=t.project_id AND p.user_id=t.user_id WHERE t.kind='watch' AND t.status='failed' AND t.error=?"
+        params=['Wait for the clip to finish before using its video.']
+        if uid:query+=' AND t.user_id=?';params.append(uid)
+        rows=c.execute(query,params).fetchall()
+    for row in rows:
+        t=dict(row);directory=portal().project_dir(t['project_id'],t['user_id'])
+        if not (directory/'aim.sqlite').is_file():continue
+        scope=store.set_scope(directory)
+        try:
+            if store.get('workspace_id')!=t['workspace_id']:continue
+            jid=json.loads(t['arguments']).get('jid')
+            job=next((j for j in store.jobs() if j[0]==jid),None)
+            if not job:continue
+            ready=clip_ready(job,directory)
+            actual_failure=job[3] in ('FAILED','CANCELLED','CANCELED','TIMED_OUT')
+            status='succeeded' if ready else 'failed' if actual_failure else 'waiting'
+            error='Video generation could not finish. Review the clip status before trying again.' if actual_failure else ''
+            with portal().db() as c:
+                changed=c.execute("UPDATE background_tasks SET status=?,error=?,updated=?,finished=?,owner=NULL,lease_until=NULL,next_run=0 WHERE id=? AND status='failed' AND error=?",
+                                  (status,error,store.now(),store.now() if ready or actual_failure else None,t['id'],params[0])).rowcount
+                if changed and ready:notify_clip_ready(c,t)
+        finally:store.reset_scope(scope)
+
 def recover_video_jobs():
+    repair_unfinished_watch_records()
     with portal().db() as c:rows=c.execute('SELECT p.* FROM projects p JOIN users u ON u.id=p.user_id').fetchall()
     for p in rows:
         directory=portal().project_dir(p['id'],p['user_id'])
@@ -189,11 +223,8 @@ def finish(t,status,error='',result=None):
         changed=c.execute('UPDATE background_tasks SET status=?,error=?,result=?,updated=?,finished=?,owner=NULL,lease_until=NULL WHERE id=? AND owner=?',
                          (status,error,json.dumps(result or {}),store.now(),store.now(),t['id'],t['owner'])).rowcount
         if not changed:return
-        # Submission events already notify reviewers; video submission is not a ready video.
-        if t['path'] not in ('/api/render/submit','/api/community/submit') or status!='succeeded':
-            failed=status in ('failed','interrupted')
-            title=t['label']+(' could not finish.' if failed else ' paused.' if status=='paused' else ' is ready.')
-            notifications.add(c,t['user_id'],'creation_failed' if failed else 'creation_ready',title,destination(t),t['id'],'task:'+t['id'])
+        # Only a saved, completed video gets an inbox notification.
+        if t['kind']=='watch' and status=='succeeded':notify_clip_ready(c,t)
 
 def run_once(app,api):
     t=claim()
@@ -224,13 +255,15 @@ def run_once(app,api):
                     with portal().db() as c:c.execute("UPDATE background_tasks SET status='waiting',next_run=?,owner=NULL,lease_until=NULL,updated=? WHERE id=? AND owner=?",(time.time()+30,store.now(),t['id'],t['owner']))
                     return True
                 message=exc.description if isinstance(exc,HTTPException) else api['error_message'](exc)
-                finish(t,'failed',message);return True
+                finish(t,'interrupted' if t['kind']=='watch' else 'failed',message);return True
         if t['kind']=='watch':
-            jid=json.loads(t['arguments'])['jid'];job=api['render_job'](jid)
-            ready=job[3]=='COMPLETED' and job[5] and not job[5].startswith(('http://','https://')) and (directory/Path(job[5]).name).is_file()
+            jid=json.loads(t['arguments'])['jid'];job=next((j for j in store.jobs() if j[0]==jid),None)
+            if not job:
+                finish(t,'interrupted','This clip could not be found. Open its project to check the saved results.');return True
+            ready=clip_ready(job,directory)
             if ready:finish(t,'succeeded')
             elif job[3] in ('FAILED','CANCELLED','CANCELED','TIMED_OUT'):finish(t,'failed','Video generation could not finish. Review the clip status before trying again.')
-            elif time.time()-__import__('datetime').datetime.fromisoformat(t['created']).timestamp()>86400:finish(t,'failed','This video still needs a status check. Open the video library before starting another generation.')
+            elif time.time()-__import__('datetime').datetime.fromisoformat(t['created']).timestamp()>86400:finish(t,'interrupted','This video still needs a status check. Open the video library before starting another generation.')
             else:
                 with portal().db() as c:c.execute("UPDATE background_tasks SET status='waiting',next_run=?,owner=NULL,lease_until=NULL,updated=? WHERE id=? AND owner=?",(time.time()+10,store.now(),t['id'],t['owner']))
         else:
@@ -241,7 +274,7 @@ def run_once(app,api):
                     if job[3] not in ('COMPLETED','FAILED','CANCELLED','CANCELED','TIMED_OUT'):schedule_watch(t['user_id'],t['project_id'],t['workspace_id'],job[0])
     except Exception as exc:
         # No automatic retry of an operation that may have reached a paid provider.
-        finish(t,'failed',str(exc)[:400] if isinstance(exc,ValueError) else 'This task could not finish. Your saved work is safe.')
+        finish(t,'interrupted' if t['kind']=='watch' else 'failed',str(exc)[:400] if isinstance(exc,ValueError) else 'This task could not finish. Your saved work is safe.')
     finally:
         stop.set();pulse.join(timeout=1);_TASK.reset(ctx);store.reset_scope(scope)
     return True
@@ -285,6 +318,7 @@ def install(app,api):
     @app.get('/api/account/tasks')
     def task_list():
         uid=portal().user()['id'];key=request.args.get('key')
+        repair_unfinished_watch_records(uid)
         with portal().db() as c:
             if key:rows=c.execute('SELECT * FROM background_tasks WHERE user_id=? AND idempotency_key=?',(uid,key)).fetchall()
             else:rows=c.execute('SELECT * FROM background_tasks WHERE user_id=? ORDER BY created DESC,rowid DESC LIMIT 50',(uid,)).fetchall()

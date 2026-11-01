@@ -120,6 +120,7 @@ def normalize_characters(value):
         for field in CHAR_FIELDS:
             char[field] = str(char.get(field) or '')
         char.setdefault('images', [])
+        char['use_as_reference'] = char.get('use_as_reference', True) is not False
         result.append(char)
     return {'characters': result}
 
