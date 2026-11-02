@@ -19,6 +19,7 @@ import store
 import video_tools
 import notifications
 import background_tasks
+import studio_dashboard
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 ROOT = store.DATA
@@ -175,7 +176,7 @@ def serialize(row,private=False):
 def studio_state():
     if not user():return {}
     with db() as c:rows=c.execute('SELECT * FROM submissions WHERE user_id=? AND project_id=? ORDER BY created DESC,rowid DESC',(user()['id'],g.project_id)).fetchall()
-    return {'user':{k:user()[k] for k in ('id','name','role')},'project_id':g.project_id,'projects':projects(),
+    return {'user':{**{k:user()[k] for k in ('id','name','role')},'avatar_url':avatar_url(user())},'project_id':g.project_id,'projects':projects(),
             'submissions':[serialize(dict(r),True) for r in rows], 'policy':policy(),
             'paid_enabled':os.getenv('AIM_ALLOW_PAID_API','0')=='1', 'voice_model':os.getenv('OPENAI_REALTIME_MODEL','gpt-realtime-2.1-mini')}
 
@@ -260,7 +261,7 @@ def install(app,api):
             r=c.execute('SELECT u.* FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.id=? AND s.expires>?',
                         (session.get('sid',''),time.time())).fetchone()
             if r:g.user=dict(r)
-        if request.path == '/' and not user():
+        if request.path=='/' and request.method in ('GET','HEAD'):
             return redirect('/discover')
         public=(request.path.startswith('/static/') or request.path in ('/login','/discover','/api/auth/state','/api/auth/login','/api/auth/register','/api/community/feed','/account/notifications/verify') or request.path.startswith(('/watch/','/api/community/posts/','/community/media/','/creators/','/api/creators/','/profile-images/')))
         if not public and not user():
@@ -277,7 +278,7 @@ def install(app,api):
                 if requested_project not in {p['id'] for p in ps}:abort(404,'Project not found.')
                 pid=requested_project
             studio_pages={'overview','source','share','idea','brief','characters','script','shots','render','library','assembly','settings','activity'}
-            needs_project=(request.path=='/' or request.path.lstrip('/') in studio_pages or request.path in ('/api/state','/api/community/submit')
+            needs_project=(request.path.lstrip('/') in studio_pages - {'overview'} or request.path in ('/api/state','/api/community/submit')
                            or request.path.startswith(('/assets/','/video/','/assembly/'))
                            or request.path.startswith('/api/') and not request.path.startswith(('/api/auth/','/api/account/','/api/platform/','/api/community/','/api/review/','/api/creators/')))
             if request.path=='/api/community/submit':
@@ -514,7 +515,30 @@ def install(app,api):
 
     @app.post('/api/platform/projects')
     def portal_new_project():
-        session['project_id']=create_project(user()['id'],payload().get('name','Untitled movie'));return jsonify(ok=True)
+        pid=create_project(user()['id'],payload().get('name','Untitled movie'))
+        session['project_id']=pid
+        return jsonify(ok=True,project_id=pid,url='/idea?project='+pid)
+
+    @app.get('/api/platform/dashboard')
+    def studio_dashboard_data():
+        own=projects()
+        with db() as c:
+            shared={r[0] for r in c.execute("SELECT DISTINCT project_id FROM submissions WHERE user_id=? AND status IN ('submitted','in_review','approved','published')",(user()['id'],))}
+        movies=[studio_dashboard.movie_summary(p,project_dir(p['id']),p['id'] in shared) for p in own]
+        movies.sort(key=lambda p:p['updated'],reverse=True)
+        tasks=background_tasks.project_tasks(user()['id'],g.project_id) if getattr(g,'project_id',None) else []
+        return jsonify(dashboard={'movies':movies},tasks=tasks,platform={
+            'user':{**{k:user()[k] for k in ('id','name','role')},'avatar_url':avatar_url(user())},
+            'project_id':getattr(g,'project_id',None),'projects':own,
+            'paid_enabled':os.getenv('AIM_ALLOW_PAID_API','0')=='1'})
+
+    @app.get('/api/platform/projects/<pid>/cover/<name>')
+    def studio_dashboard_cover(pid,name):
+        if pid not in {p['id'] for p in projects()}:abort(404)
+        assets=(project_dir(pid)/'assets').resolve()
+        path=(assets/name).resolve()
+        if path.parent!=assets or path.suffix.lower() not in {'.png','.jpg','.jpeg','.webp'} or not path.is_file():abort(404)
+        return send_file(path,conditional=True)
 
     @app.post('/api/platform/projects/select')
     def select_project():
