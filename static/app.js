@@ -25,7 +25,7 @@ function button(text, action, klass='secondary', attrs='') {
   return `<button class="button ${klass}" data-action="${action}" ${attrs}>${text}</button>`;
 }
 function link(text, dest, klass='secondary') {
-  return `<a href="/${dest === 'overview' ? '' : dest}" data-nav="${dest}" class="button ${klass}">${text}</a>`;
+  return `<a href="/${dest}" data-nav="${dest}" class="button ${klass}">${text}</a>`;
 }
 function heading(eyebrow, title, copy, right='') {
   return `<div class="page-heading"><div><div class="eyebrow">${eyebrow}</div><h1>${title}</h1><p>${copy}</p></div>${right}</div>`;
@@ -88,8 +88,12 @@ async function navigate(dest, force=false) {
   if(bookAnalysisRunning)return toast('Stop book analysis before changing pages.');
   if (!force && (busy || (dirty || AIMVoice.active()) && !window.confirm('Leave this page? Unsaved edits and any current recording will be discarded.'))) return;
   await AIMVoice.cancel();AIMVoice.stopPlayback();
+  if(dest==='overview' || S?.dashboard) {
+    try { await api(dest==='overview'?'platform/dashboard':'state'); }
+    catch(error) { return toast(error.message,true); }
+  }
   page = dest; setDirty(false);
-  const path = '/' + (dest === 'overview' ? '' : dest);
+  const path = '/' + dest;
   if (location.pathname !== path) history.pushState({},'',path);
   $('#sidebar').classList.remove('open');$('#menu-toggle').setAttribute('aria-expanded','false');
   render();window.scrollTo(0,0);$('#main').focus({preventScroll:true});
@@ -103,9 +107,11 @@ function resumePage() {
   return 'render';
 }
 function renderShell() {
+  document.body.classList.toggle('studio-dashboard',page==='overview');
   platformHeader();
   AIMTasks.showBar(S.tasks||[]);
   document.title = `${titles[page] || 'Studio'} · AIM.movie`;
+  if(page==='overview')return;
   $('#project-title').textContent = S.vision.title || 'Untitled movie';
   $('#global-model').innerHTML = S.text_models.map(m=>`<option value="${esc(m)}" ${m===S.settings.model ? 'selected' : ''}>${esc(m)}</option>`).join('');
   $('#workflow-nav').innerHTML = steps.map(([slug,label,copy,stage],index)=>{
@@ -116,12 +122,7 @@ function renderShell() {
   $('#library-count').textContent = S.jobs.length || '';
 }
 function overview() {
-  const started = S.messages.length || S.vision.logline;
-  const active = resumePage();
-  const heroTitle = started ? `Your movie,<br><em>in the making.</em>` : `Every movie starts<br>with <em>an idea.</em>`;
-  return `<section class="hero"><div><div class="eyebrow">AIM.MOVIE / YOUR CREATIVE WORKSPACE</div><h1>${heroTitle}</h1><p>Shape an idea, meet your characters, and bring your story to the screen. You set the direction at every step.</p>${link((started ? 'Continue my movie' : 'Start my movie')+' <span class="arrow">→</span>',active,'primary large')}</div><div class="hero-art"><span class="frame-corner tl"></span><span class="frame-corner br"></span><div class="film-tag">A PROJECT BY YOU</div><h2>${esc(S.vision.title || 'The next story is yours.')}</h2><p>${esc(S.vision.logline || 'A little imagination. A clear creative direction. Let’s see what you can make.')}</p><div class="film-caption">${esc(S.vision.genre || 'From idea to screen')}</div></div></section>
-    <div class="stats-row"><div class="stat"><strong>${S.characters.length}</strong><span>Characters</span></div><div class="stat"><strong>${S.script.scenes?.length || 0}</strong><span>Scenes</span></div><div class="stat"><strong>${S.director.shots?.length || 0}</strong><span>Shots planned</span></div><div class="stat"><strong>${S.jobs.filter(j=>j.status==='COMPLETED').length}</strong><span>Rendered clips</span></div></div>
-    <div class="section-header"><h2>Your creative journey</h2><p>Review it. Make it yours. Continue.</p></div><div class="panel">${steps.map(([slug,label,copy,stage],i)=>`<div class="journey-item"><span class="journey-number">0${i+1}</span><div class="journey-content"><h3>${label}</h3><p>${copy}</p></div>${stage ? badge(S.statuses[stage]) : ''}<a href="/${slug}" data-nav="${slug}" aria-label="Open ${label}">→</a></div>`).join('')}</div>`;
+  return studioDashboardPage();
 }
 function idea() {
   const examples = ['Two rivals face off on a rainy neon street. One charges forward while the other dodges at the last second.','A student finds out their ordinary neighbor is secretly protecting the city.'];
@@ -249,7 +250,7 @@ function assemblyPage() {
     ${exports.length ? `<div class="section-heading"><h2>Your exported scenes</h2><p>Each export stays available when you change the arrangement.</p></div>${exports.map(a=>`<section class="panel job-card" id="assembly-${esc(a.id)}"><div class="row between wrap"><div><h3>${esc(a.name)}</h3><p class="job-meta">${a.clip_ids.length} clips · ${Number(a.duration_seconds).toFixed(1)} sec · ${a.width} × ${a.height} · ${esc(new Date(a.created).toLocaleString())}</p></div>${badge('completed')}</div>${a.video_url ? `<video controls preload="metadata" src="${esc(a.video_url)}" aria-label="${esc(a.name)}"></video><div class="row wrap">${button('Send for review →','review-output','primary small',`data-kind="assembly" data-id="${esc(a.id)}"`)}<a class="button secondary small" href="${esc(a.video_url)}?download=1">Download scene</a>${button('Load this arrangement','load-assembly','secondary small',`data-id="${esc(a.id)}"`)}${button('Continue this scene','continue-clip','ghost small',`data-id="${esc(a.clip_ids.at(-1))}"`)}</div>` : notice('The scene file is missing. Restore the video file or export the arrangement again.')}</section>`).join('')}` : ''}`;
 }
 function archivesPanel() {
-  return `<section class="panel settings-section"><div class="panel-title"><div><h3>Your movies & saved versions</h3><p>Name a checkpoint now, or archive your movie when you start a new one.</p></div><a class="button ghost small" href="/api/projects/export">Export project database</a></div><div class="row wrap">${button('Save named version','archive-project','primary')}${button('Start a new movie','new-project','secondary')}</div>${S.archives.length ? `<hr><label class="field"><span>Saved movie versions</span><select id="archive-choice">${S.archives.map(a=>`<option value="${esc(a.id)}">${esc(a.name+' · '+new Date(a.created).toLocaleString())}</option>`).join('')}</select></label><div class="row wrap" style="margin-top:14px">${button('Restore selected version','restore-project','secondary')}${button('Rename selected version','rename-archive','ghost')}</div>` : '<p class="hint">Your named versions will appear here after you save a checkpoint or start a new movie.</p>'}${adminInfo('<p class="hint">Keep your full persistent data directory when updating the app to retain saved versions and media.</p>')}</section>`;
+  return `<section class="panel settings-section"><div class="panel-title"><div><h3>Your movies & saved versions</h3><p>Save named checkpoints for this movie. Each new movie gets its own workspace in My Studio.</p></div><a class="button ghost small" href="/api/projects/export">Export project database</a></div><div class="row wrap">${button('Save named version','archive-project','primary')}${button('Start a new movie','new-project','secondary')}</div>${S.archives.length ? `<hr><label class="field"><span>Saved movie versions</span><select id="archive-choice">${S.archives.map(a=>`<option value="${esc(a.id)}">${esc(a.name+' · '+new Date(a.created).toLocaleString())}</option>`).join('')}</select></label><div class="row wrap" style="margin-top:14px">${button('Restore selected version','restore-project','secondary')}${button('Rename selected version','rename-archive','ghost')}</div>` : '<p class="hint">Your named versions will appear here after you save a checkpoint.</p>'}${adminInfo('<p class="hint">Keep your full persistent data directory when updating the app to retain saved versions and media.</p>')}</section>`;
 }
 
 function settingsPage() {
@@ -270,7 +271,7 @@ function activityPage() {
 function render() {
   if (!S) return;
   renderShell();
-  const views={overview:()=>projectPicker()+overview(),source:sourcePage,share:sharePage,idea,brief,characters,script:scriptPage,shots:shotsPage,render:renderPage,library:libraryPage,assembly:assemblyPage,settings:settingsPage,activity:activityPage};
+  const views={overview,source:sourcePage,share:sharePage,idea,brief,characters,script:scriptPage,shots:shotsPage,render:renderPage,library:libraryPage,assembly:assemblyPage,settings:settingsPage,activity:activityPage};
   $('#main').innerHTML=(views[page] || overview)();
   if((S.tasks||[]).some(t=>t.kind==='operation'&&['queued','running'].includes(t.status))){
     $$('#main input, #main textarea, #main select, #main button').forEach(e=>{if(e.id!=='platform-project'&&e.dataset.action!=='source-read')e.disabled=true;});
@@ -348,6 +349,7 @@ async function approveStep(stage) {
   },{dest,message:'Creative choices saved.'});
 }
 async function handleAction(action,el) {
+  if(studioDashboardAction(action,el))return;
   if(action==='source-stop')return platformAction(action,el);
   if(busy || bookAnalysisRunning) return;
   if(AIMVoice.active() && !action.startsWith('voice-') && !['clear-conversation','clear-composer'].includes(action))return toast('Stop your voice conversation before changing the project.',true);
@@ -480,8 +482,11 @@ async function handleAction(action,el) {
       if(name!==null)return run('Renaming the saved version…',()=>api('projects/rename',{archive,name}),{message:'Version renamed.'});return;
     }
     case 'new-project': {
-      const archive_label=await confirmAction('Start a new movie?','Give the current version a name before it is archived. You can restore it in Settings.','Start new movie',{label:'Name for the current version',value:S.vision.title || 'Untitled movie'});
-      if(archive_label!==null)return run('Starting your new movie…',async()=>{await api('projects/new',{archive_label});currentCID=null;},{dest:'idea',message:'Previous movie archived. Your new workspace is ready.'});return;
+      const name=await confirmAction('Start a new movie','Give your new project a name. Your existing movies will stay in My Studio.','Create movie',{label:'Movie name',value:'',placeholder:'Untitled movie'});
+      if(name!==null)return run('Creating your movie…',async()=>{
+        const result=await portalRequest('platform/projects',{name:name||'Untitled movie'});
+        setDirty(false);location.href=result.url||'/idea';
+      },{repaint:false});return;
     }
     case 'restore-project': {
       const archive=$('#archive-choice').value;
@@ -497,14 +502,15 @@ document.addEventListener('click',event=>{
   if(action){event.preventDefault();handleAction(action.dataset.action,action).catch(error=>toast(error.message,true));}
 });
 document.addEventListener('input',event=>{
-  if(event.target.matches('#main input:not([type=file]), #main textarea, #main select') && !event.target.dataset.videoOption && !['archive-choice','sequence-clip-choice','voice-read-replies'].includes(event.target.id)) setDirty(true);
+  if(page!=='overview' && event.target.matches('#main input:not([type=file]), #main textarea, #main select') && !event.target.dataset.videoOption && !['archive-choice','sequence-clip-choice','voice-read-replies'].includes(event.target.id)) setDirty(true);
   if(event.target.matches?.('[data-field="render_prompt"]'))updateVideoPricing();
   if(event.target.id==='render-duration') {$('#duration-value').textContent=event.target.value+'s';updateVideoPricing();}
 });
 document.addEventListener('change',async event=>{
   const input=event.target;
+  if(input.id==='studio-sort') {studioDisplay.sort=['recent','oldest','title'].includes(input.value)?input.value:'recent';render();$('#studio-sort').focus();return;}
   if(input.name==='source'&&input.closest('#share-form')){changeReviewSource(input);return;}
-  if(input.id==='platform-project'){if(dirty&&!window.confirm('Switch projects and discard unsaved edits?'))return;await AIMVoice.stop();await portalRequest('platform/projects/select',{id:input.value});location.href='/';return;}
+  if(input.id==='platform-project'){if(dirty&&!window.confirm('Switch projects and discard unsaved edits?'))return;await AIMVoice.stop();await portalRequest('platform/projects/select',{id:input.value});location.href='/overview';return;}
   if(input.name==='character-reference-use'){await run('Saving image choice…',saveCharacter);return;}
   if(input.hasAttribute('data-runway-quality')){await changeRunwayQuality(input);return;}
   if(input.dataset.videoOption){await changeVideoOption(input);return;}
@@ -558,9 +564,14 @@ document.addEventListener('keydown',event=>{
 });
 $('#menu-toggle').addEventListener('click',()=>{const open=$('#sidebar').classList.toggle('open');$('#menu-toggle').setAttribute('aria-expanded',String(open));});
 window.addEventListener('popstate',async()=>{
-  if(busy || (dirty || AIMVoice.active()) && !window.confirm('Leave this page? Unsaved edits and any current recording will be discarded.')) {history.pushState({},'', '/'+(page==='overview'?'':page));return;}
+  if(busy || (dirty || AIMVoice.active()) && !window.confirm('Leave this page? Unsaved edits and any current recording will be discarded.')) {history.pushState({},'', '/'+page);return;}
   await AIMVoice.cancel();AIMVoice.stopPlayback();
-  page=location.pathname.slice(1) || 'overview';setDirty(false);render();
+  const next=location.pathname.slice(1) || 'overview';
+  if(next==='overview' || S?.dashboard) {
+    try { await api(next==='overview'?'platform/dashboard':'state'); }
+    catch(error) { history.replaceState({},'','/'+page);toast(error.message,true);return; }
+  }
+  page=next;setDirty(false);render();
 });
 window.addEventListener('beforeunload',event=>{if(dirty || busy || bookAnalysisRunning || AIMVoice.active()){event.preventDefault();event.returnValue='';}});
 document.addEventListener('aim:tasks',async event=>{
@@ -568,10 +579,11 @@ document.addEventListener('aim:tasks',async event=>{
  const local=event.detail.items.filter(t=>t.project_id===S.platform.project_id);const old=JSON.stringify((S.tasks||[]).map(t=>[t.id,t.status,t.progress]));
  S.tasks=local;AIMTasks.showBar(local);
  if(!event.detail.initial&&old!==JSON.stringify(local.map(t=>[t.id,t.status,t.progress]))&&!busy&&!dirty&&!AIMVoice.active()){
-  try{await api('state');render();}catch{}
+  try{await api(page==='overview'?'platform/dashboard':'state');render();}catch{}
  }
 });
-document.addEventListener('aim:resume',async()=>{if(S&&!dirty&&!busy&&!AIMVoice.active()){try{await api('state');render();}catch{}}});
-api('state').then(()=>render()).catch(error=>{
+document.addEventListener('aim:resume',async()=>{if(S&&!dirty&&!busy&&!AIMVoice.active()){try{await api(page==='overview'?'platform/dashboard':'state');render();}catch{}}});
+// STUDIO_STARTUP
+api(page==='overview'?'platform/dashboard':'state').then(()=>render()).catch(error=>{
   $('#main').innerHTML=`<div class="empty-state"><h2>The studio could not open.</h2><p>${esc(error.message)}</p><button class="button primary" onclick="location.reload()">Try again</button></div>`;
 });

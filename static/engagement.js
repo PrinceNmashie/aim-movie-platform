@@ -55,12 +55,24 @@ const AIMTasks = (()=>{
 const AIMInbox = (()=>{
  let items=[],unread=0,checking=false,initialized=false;
  const e=AIMText.escape;
+ function account(user){
+  const header=document.querySelector('.platform-header');if(!header)return;
+  let actions=header.querySelector('.header-account');
+  if(!user){actions?.remove();return;}
+  if(!actions){actions=document.createElement('div');actions.className='header-account';header.append(actions);}
+  let profile=actions.querySelector('.header-profile');
+  if(!profile){profile=document.createElement('a');profile.className='header-profile';profile.href='/account';profile.setAttribute('aria-label','Open your profile');profile.title='Your profile';actions.append(profile);}
+  const initial=[...String(user.name||'?').trim()][0]||'?';
+  profile.innerHTML=user.avatar_url?`<img src="${e(user.avatar_url)}" alt="" width="40" height="40">`:`<span aria-hidden="true">${e(initial.toUpperCase())}</span>`;
+  profile.querySelector('img')?.addEventListener('error',()=>{profile.innerHTML=`<span aria-hidden="true">${e(initial.toUpperCase())}</span>`;},{once:true});
+  const menu=header.querySelector('#notification-menu');if(menu)actions.insertBefore(menu,profile);
+ }
  function render(){
   const header=document.querySelector('.platform-header');if(!header)return;
   let menu=document.querySelector('#notification-menu');
-  if(!menu){menu=document.createElement('details');menu.id='notification-menu';menu.className='notification-menu';header.append(menu);}
+   if(!menu){menu=document.createElement('details');menu.id='notification-menu';menu.className='notification-menu';const actions=header.querySelector('.header-account');if(actions)actions.prepend(menu);else header.append(menu);}
   const opened=menu.open;
-  menu.innerHTML=`<summary aria-label="Notifications${unread?', '+unread+' unread':''}"><span aria-hidden="true">🔔</span><span class="notification-label">Updates</span>${unread?`<span class="notification-count">${unread>99?'99+':unread}</span>`:''}</summary><div class="notification-popover"><div class="row between"><strong>Notifications</strong><a href="/account/notifications">View all</a></div>${items.slice(0,5).map(n=>`<a class="notification-preview ${n.read_at?'':'unread'}" href="${e(n.link)}" data-notice="${e(n.id)}">${e(n.title)}<small>${e(new Date(n.created).toLocaleString())}</small></a>`).join('')||'<p class="portal-muted">You’re all caught up.</p>'}<a href="/account/settings#notifications" class="button ghost small">Notification settings</a></div>`;
+   menu.innerHTML=`<summary aria-label="Notifications${unread?', '+unread+' unread':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg><span class="notification-label">Updates</span>${unread?`<span class="notification-count">${unread>99?'99+':unread}</span>`:''}</summary><div class="notification-popover"><div class="row between"><strong>Notifications</strong><a href="/account/notifications">View all</a></div>${items.slice(0,5).map(n=>`<a class="notification-preview ${n.read_at?'':'unread'}" href="${e(n.link)}" data-notice="${e(n.id)}">${e(n.title)}<small>${e(new Date(n.created).toLocaleString())}</small></a>`).join('')||'<p class="portal-muted">You’re all caught up.</p>'}<a href="/account/settings#notifications" class="button ghost small">Notification settings</a></div>`;
   menu.open=opened;
  }
  async function refresh(){
@@ -73,7 +85,7 @@ const AIMInbox = (()=>{
  });
  document.addEventListener('keydown',event=>{if(event.key==='Escape'){const menu=document.querySelector('#notification-menu');if(menu)menu.open=false;}});
  document.addEventListener('aim:resume',refresh);document.addEventListener('DOMContentLoaded',refresh);setInterval(refresh,15000);
- return {refresh};
+ return {refresh,account};
 })();
 
 const AIMSocial = (()=>{
