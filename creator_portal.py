@@ -260,6 +260,8 @@ def install(app,api):
             r=c.execute('SELECT u.* FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.id=? AND s.expires>?',
                         (session.get('sid',''),time.time())).fetchone()
             if r:g.user=dict(r)
+        if request.path == '/' and not user():
+            return redirect('/discover')
         public=(request.path.startswith('/static/') or request.path in ('/login','/discover','/api/auth/state','/api/auth/login','/api/auth/register','/api/community/feed','/account/notifications/verify') or request.path.startswith(('/watch/','/api/community/posts/','/community/media/','/creators/','/api/creators/','/profile-images/')))
         if not public and not user():
             if request.path.startswith('/api/'):return jsonify(error='Sign in to continue.'),401
