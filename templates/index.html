@@ -15,13 +15,15 @@
   <script src="/static/voice.js" defer></script>
   <link rel="stylesheet" href="/static/platform.css">
   <link rel="stylesheet" href="/static/ui.css">
+  <link rel="stylesheet" href="/static/dashboard.css">
   <script src="/static/platform.js" defer></script>
+  <script src="/static/dashboard.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body class="platform-studio">
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="topbar">
-    <a class="brand" href="/" data-nav="overview" aria-label="AIM.movie studio home"><span class="brand-mark">A</span><span>AIM<span class="brand-suffix">.movie</span></span></a>
+    <a class="brand" href="/overview" data-nav="overview" aria-label="AIM.movie studio home"><span class="brand-mark">A</span><span>AIM<span class="brand-suffix">.movie</span></span></a>
     <div class="topbar-center"><span class="studio-label">CREATIVE STUDIO</span><span class="top-divider"></span><span id="project-title">Your next movie</span></div>
     <div class="topbar-actions"><span class="save-indicator" id="save-status"><span></span>Saved</span><label class="model-control"><span>GPT model</span><select id="global-model" aria-label="GPT model"></select></label><button class="icon-button mobile-menu" id="menu-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button></div>
   </header>
@@ -30,7 +32,7 @@
   <div id="task-status" style="max-width:1244px;margin:auto;padding:0 22px"></div>
   <div class="layout">
     <aside class="sidebar" id="sidebar" aria-label="Studio navigation">
-      <a class="nav-overview" href="/" data-nav="overview"><span class="nav-icon">◫</span>My studio</a>
+      <a class="nav-overview" href="/overview" data-nav="overview"><span class="nav-icon">◫</span>My studio</a>
       <div class="sidebar-label">YOUR MOVIE</div>
       <nav id="workflow-nav"></nav>
       <div class="sidebar-bottom"><a href="/library" data-nav="library"><span class="nav-icon">▤</span>Video library<span id="library-count"></span></a><a href="/assembly" data-nav="assembly"><span class="nav-icon">▣</span>Scene builder</a><a href="/activity" data-nav="activity"><span class="nav-icon">◷</span>Creative history</a><a href="/settings" data-nav="settings"><span class="nav-icon">⚙</span>Settings</a><button class="new-project" data-action="new-project"><span>＋</span>New movie</button><div class="sidebar-footnote">Your idea. Your direction.</div></div>
