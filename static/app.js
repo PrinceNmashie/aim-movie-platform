@@ -15,7 +15,7 @@ const steps = [
   ['shots','Shot plan','Turn scenes into clear shots','director'],
   ['render','Render','Bring one shot to life',null]
 ];
-const titles = {overview:'My studio',idea:'Your idea',brief:'Creative brief',characters:'Characters',script:'Script',shots:'Shot plan',render:'Render',library:'Video library',assembly:'Scene builder',settings:'Settings',activity:'Creative history',source:'Book source',share:'Review & publication'};
+const titles = {overview:'My studio',idea:'Your idea',brief:'Creative brief',characters:'Characters',script:'Script',shots:'Shot plan',render:'Render',library:'Video library',assembly:'Scene builder',settings:'Settings',activity:'Creative history',source:'Adapt a story',share:'Review & publication'};
 function badge(status) {
   const map = {approved:['Approved','green'],completed:['Completed','green'],configured:['Configured','green'],failed:['Failed','red'],draft:['Draft','gold'],review:['Review needed','gold'],empty:['Not started','']};
   const [text, color] = map[status] || [status,''];
@@ -66,7 +66,7 @@ async function api(path, data) {
   let result;
   try { result = await response.json(); } catch { throw new Error('The server did not respond. Check that the studio is still running.'); }
   if (!response.ok) throw new Error(result.error || 'This action could not be completed.');
-  if(response.status===202 && result.task){AIMTasks.track(result.task);taskQueued=true;const state=await fetch('/api/state');if(!state.ok)throw new Error('Task accepted. Open Generation history to check its progress.');S=await state.json();return S;}
+  if(response.status===202 && result.task){AIMTasks.track(result.task);taskQueued=true;const state=await fetch('/api/state');if(!state.ok)throw new Error('Your work was accepted. Reopen this movie to check its progress.');S=await state.json();return S;}
   S = result; return result;
 }
 async function run(label, work, options={}) {
@@ -108,6 +108,8 @@ function resumePage() {
 }
 function renderShell() {
   document.body.classList.toggle('studio-dashboard',page==='overview');
+  document.body.classList.toggle('creation-flow',!['overview','settings','activity'].includes(page));
+  document.body.dataset.studioPage=page;
   platformHeader();
   AIMTasks.showBar(S.tasks||[]);
   document.title = `${titles[page] || 'Studio'} · AIM.movie`;
@@ -124,20 +126,15 @@ function renderShell() {
 function overview() {
   return studioDashboardPage();
 }
-function idea() {
-  const examples = ['Two rivals face off on a rainy neon street. One charges forward while the other dodges at the last second.','A student finds out their ordinary neighbor is secretly protecting the city.'];
-  return heading('01 / THE CONVERSATION','What’s your movie idea?','Start anywhere. MIA will help shape the details, one question at a time.',badge(S.messages.length ? 'draft' : 'empty')) + noKey() +
-    `<div class="chat-layout"><section class="panel chat-panel"><div class="chat-thread" id="chat-thread">${S.messages.length ? S.messages.map(m=>`<div class="message ${m.role==='user' ? 'user' : 'ai'}"><span class="avatar ${m.role==='assistant' ? 'ai' : ''}">${m.role==='assistant' ? 'M' : 'Y'}</span><div class="message-body"><div class="message-author">${m.role==='assistant' ? 'MIA · Your creative partner' : 'You'}</div><div class="message-copy">${m.role==='assistant'?AIMText.markdown(m.content):esc(m.content)}</div></div></div>`).join('') : `<div class="message"><span class="avatar ai">M</span><div class="message-body"><div class="message-author">MIA · Your creative partner</div><div class="message-copy">Tell me what you’d like to make. It can be a scene, a character, or a complete movie idea. We’ll build it together.</div></div></div>`}</div><form id="chat-form" class="chat-composer"><div class="composer-topline"><button type="button" class="composer-clear" data-action="clear-composer">Clear draft</button><button type="button" class="composer-clear" data-action="clear-conversation">New conversation</button></div><label class="sr-only" for="chat-message">Your movie idea or reply</label><textarea id="chat-message" placeholder="I have an idea for a movie about…" rows="3"></textarea>${AIMVoice.controls()}<div class="row between"><span class="hint">Enter to send · Shift+Enter for a new line</span><button class="button primary" type="submit">Send <span class="arrow">↑</span></button></div></form></section><aside class="panel idea-sidebar"><div class="eyebrow">A GOOD PLACE TO START</div><h3>Paint the picture.</h3><div class="idea-hint"><strong>The idea</strong>What happens, and why does it matter?</div><div class="idea-hint"><strong>The people</strong>Who is in it? What makes them distinct?</div><div class="idea-hint"><strong>The feeling</strong>Realistic, animated, funny, dark, or something else?</div><div class="subtle-label" style="margin:22px 0 10px">NEED A SPARK?</div>${examples.map((e,i)=>`<button class="example-button" data-action="example" data-index="${i}">${esc(e)}</button>`).join('')}</aside></div>
-    ${S.messages.at(-1)?.role==='user' ? notice(`Your last message is saved. ${button('Retry AI reply','retry-chat','small secondary')} You can also continue to the brief.`) : ''}
-    <div class="review-footer"><div><h3>Ready to shape this into a movie?</h3><p>You decide when to move on. You can come back to the conversation.</p></div>${button('Build creative brief <span class="arrow">→</span>','generate-vision','primary',!S.messages.length || !S.configured.openai ? 'disabled' : '')}${!S.configured.openai ? link('Write a brief manually','brief','ghost') : ''}</div>`;
-}
+function idea() {return conversationPage();}
+
 function brief() {
   const v = S.vision;
   return heading('02 / CREATIVE DIRECTION','Make the vision yours.','Review what MIA understood. Change anything before building your cast.',badge(S.statuses.vision)) + noKey() + stale('vision') +
     `<form id="brief-form"><div class="grid-two"><section class="panel"><div class="panel-title"><h3>Your movie</h3></div><div class="field-grid">${field('Working title',v.title,'title',{full:true,placeholder:'Give your movie a name'})}${field('Premise',v.logline,'logline',{full:true,area:true,rows:4,required:true,placeholder:'What happens in your story?'})}${field('Genre',v.genre,'genre',{placeholder:'Action, drama, comedy…'})}${field('Tone',v.tone,'tone',{placeholder:'Hopeful, tense, playful…'})}${field('Setting',v.setting,'setting',{area:true,full:true,placeholder:'Where and when does it take place?'})}</div></section><section class="panel"><div class="panel-title"><h3>The look and creative choices</h3></div><div class="field-grid">${field('Visual style',v.visual_style,'visual_style',{full:true,area:true,rows:3,placeholder:'Cinematic realism, bold comic-book ink…'})}${field('Target duration in seconds',v.duration_seconds || 30,'duration_seconds',{type:'number',full:true,hint:'Target length for your completed movie.'})}${field('Themes',v.themes?.join('\n'),'themes',{area:true,full:true,hint:'One theme per line.'})}${field('Creative decisions to preserve',v.creative_decisions?.join('\n'),'creative_decisions',{area:true,full:true,hint:'One decision per line.'})}</div></section></div></form>
     ${v.open_questions?.length ? `<details class="panel" style="margin-top:22px"><summary>Suggestions still open to your direction (${v.open_questions.length})</summary>${v.open_questions.map(q=>`<div class="list-note">${esc(q)}</div>`).join('')}</details>` : ''}
-    <div class="row wrap" style="margin-top:22px">${button('Save brief','save-vision')}${button('Refresh from conversation','generate-vision','ghost',!S.configured.openai || !S.messages.length ? 'disabled' : '')}</div>
-    ${reviewFooter('Does this capture your idea?','Your approved brief becomes the starting point for the character sheets.','idea','approve-vision','Approve & build characters')}`;
+    <div class="row wrap" style="margin-top:22px">${button('Save brief','save-vision')}${button(S.source?.selected?.length?'Refresh from source':'Refresh from conversation','generate-vision','ghost',!S.configured.openai || (!S.messages.length&&!S.source?.selected?.length) ? 'disabled' : '')}</div>
+    ${reviewFooter('Does this capture your idea?','Your approved brief becomes the starting point for the character sheets.',S.source?.selected?.length?'source':'idea','approve-vision','Approve & build characters')}`;
 }
 function imagePreview(url,name) {
   return `<div class="sheet-view">${url ? `<img src="${esc(url)}" alt="${esc(name)} character reference sheet">` : `<div class="sheet-placeholder"><span class="initials">${esc(initials(name))}</span><strong>Your character, visualized.</strong><p>Generate a reference sheet from the details on the left, or upload one you already like.</p></div>`}</div>`;
@@ -151,9 +148,9 @@ function characterReferenceChoice(c) {
 }
 function characters() {
   if (!S.characters.length) {
-    return heading('03 / THE CAST','Meet your characters.','Turn the conversation into editable character profiles and visual reference sheets.',badge(S.statuses.characters)) + noKey() +
+    return heading('03 / THE CAST','Meet your characters.','Develop your cast from the approved creative brief, whether you started with an idea or a source story.',badge(S.statuses.characters)) + noKey() +
       (S.statuses.vision !== 'approved' ? notice(`Approve your creative brief to draft character profiles. ${link('Review brief','brief','ghost small')}`) : '') +
-      `<div class="empty-state"><div class="empty-symbol">♙</div><h2>Your cast starts with your idea.</h2><p>MIA uses your conversation and approved brief to draft each character’s appearance, personality, and reference-sheet prompt.</p><div class="row wrap">${button('Draft characters from my idea','generate-characters','primary',S.statuses.vision !== 'approved' || !S.configured.openai ? 'disabled' : '')}${button('Add a character myself','add-character','secondary')}</div></div>` +
+      `<div class="empty-state"><div class="empty-symbol">♙</div><h2>Your cast starts with your idea.</h2><p>MIA uses your approved brief to draft each character’s appearance, personality, and visual reference.</p><div class="row wrap">${button('Draft your characters','generate-characters','primary',S.statuses.vision !== 'approved' || !S.configured.openai ? 'disabled' : '')}${button('Add a character myself','add-character','secondary')}</div></div>` +
       (S.statuses.vision==='approved' ? `<div class="review-footer"><div><h3>A movie without characters?</h3><p>You can continue with a scenery or abstract film.</p></div>${button('Continue without a cast','skip-characters','ghost')}</div>` : '');
   }
   const c = S.characters.find(c=>c.id===currentCID) || S.characters[0];currentCID=c.id;
@@ -353,6 +350,7 @@ async function handleAction(action,el) {
   if(action==='source-stop')return platformAction(action,el);
   if(busy || bookAnalysisRunning) return;
   if(AIMVoice.active() && !action.startsWith('voice-') && !['clear-conversation','clear-composer'].includes(action))return toast('Stop your voice conversation before changing the project.',true);
+  if(await creationAction(action,el))return;
   if(await platformAction(action,el))return;
   if(action.startsWith('generate-') && ['vision','characters','script','director'].includes(action.slice(9))) return generate(action.slice(9));
   if(action.startsWith('approve-')) return approveStep(action.slice(8));
@@ -360,6 +358,7 @@ async function handleAction(action,el) {
     case 'clear-composer':$('#chat-message').value='';setDirty(false);$('#chat-message').focus();return;
     case 'clear-conversation':
       if(await confirmAction('Start a new conversation?','This clears the conversation. Your existing drafts, character images and videos stay saved.','Clear conversation')){
+        conversationError='';conversationStarter='idea';
         await AIMVoice.stop();return run('Clearing your conversation…',()=>api('chat/clear',{confirm:true}),{dest:'idea',message:'Conversation cleared.'});
       }return;
     case 'voice-start':return AIMVoice.begin();
@@ -403,8 +402,7 @@ async function handleAction(action,el) {
     case 'clear-ref': return run('Clearing the reference…',()=>api('references/'+el.dataset.slot,{clear:true}));
     case 'ensemble': return run('Building the combined cast sheet…',async()=>{if(dirty) await saveCharacter();await api('ensemble',{});},{copy:'Your edited cast and selected images guide this sheet. It may take a few minutes.',message:'Combined cast sheet saved.'});
     case 'retry-chat': {
-      const success=await run('MIA is thinking…',()=>api('chat/retry',{}));
-      if(success && S.settings.speak_replies)AIMVoice.speakLast();return;
+      await sendConversation('',true);return;
     }
     case 'example': {
       const examples=['Two rivals face off on a rainy neon street. One charges forward while the other dodges at the last second.','A student finds out their ordinary neighbor is secretly protecting the city.'];
@@ -543,9 +541,7 @@ document.addEventListener('submit',async event=>{
   if(id==='chat-form') {
     const text=$('#chat-message').value.trim();if(!text)return;
     if(AIMVoice.active()){if(AIMVoice.typed(text)){$('#chat-message').value='';setDirty(false);}return;}
-    const success=await run('MIA is thinking…',()=>api('chat',{message:text}),{copy:isAdmin()?'Developing your idea with '+S.settings.model+'.':'Developing your idea.'});
-    if(success && S.settings.speak_replies)AIMVoice.speakLast();
-    if(!success){try{await api('state');render();setDirty(false);}catch{}}
+    await sendConversation(text);
   }
   if(id==='settings-form') {
     const updates=Object.fromEntries($$('[data-setting]').map(e=>[e.dataset.setting,e.value]));

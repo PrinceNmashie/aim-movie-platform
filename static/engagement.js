@@ -9,7 +9,7 @@ const AIMText = (()=>{
 
 const AIMTasks = (()=>{
  const e=AIMText.escape;
- const long=/^(?:chat(?:\/retry)?|generate\/(?:vision|characters|script|director)|characters\/[^/]+\/image|ensemble|render\/(?:submit|first-frame)|jobs\/[^/]+\/(?:last-frame|continue)|sequence\/combine|source\/(?:upload|analyze-next|analyze-all|synthesize)|community\/submit)$/;
+ const long=/^(?:generate\/(?:vision|characters|script|director)|characters\/[^/]+\/image|ensemble|render\/(?:submit|first-frame)|jobs\/[^/]+\/(?:last-frame|continue)|sequence\/combine|source\/(?:upload|analyze-next|analyze-all|synthesize)|community\/submit)$/;
  let latest=[],checking=false,previous=null;
  const csrf=()=>document.querySelector('meta[name="aim-token"]')?.content||'';
  async function request(path,opts={},workspace=''){
@@ -23,19 +23,19 @@ const AIMTasks = (()=>{
    try{sessionStorage.setItem(storageKey,JSON.stringify(record));}catch{}
    opts.headers['X-AIM-Async']='1';opts.headers['X-AIM-Key']=record.key;
   }
-  const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),25000);
+  const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),/^chat(?:\/retry)?$/.test(path)?180000:25000);
   try{
    const response=await fetch('/api/'+path,{...opts,signal:controller.signal});
    if(isLong&&response.ok){try{sessionStorage.removeItem(storageKey);}catch{}}
    return response;
-  }catch(error){throw new Error(isLong?'Connection interrupted. Check Generation history before trying again; an accepted task keeps working.':error.name==='AbortError'?'This request took too long. Refresh to see your saved work.':'Connection interrupted. Please try again.');}
+  }catch(error){throw new Error(isLong?'Connection interrupted. Reopen this movie before retrying; accepted work continues.':error.name==='AbortError'?'This request took longer than expected. Refresh to check your saved message before retrying.':'Connection interrupted. Please try again.');}
   finally{clearTimeout(timeout);}
  }
  function track(task){latest=[task,...latest.filter(t=>t.id!==task.id)];showBar(latest);poll();}
  function showBar(tasks){
   const slot=document.querySelector('#task-status');if(!slot)return;
   const active=tasks.filter(t=>['queued','running','waiting'].includes(t.status));
-  slot.innerHTML=active.length?`<div class="task-banner" role="status"><span class="spinner small-spinner"></span><div><strong>${e(active[0].label)} · ${active[0].status==='queued'?'Queued':'In progress'}</strong><span>${active[0].total?`${active[0].progress} of ${active[0].total} excerpts saved. `:''}You can leave this page and return when it’s ready.</span></div><a href="/account/tasks" class="button ghost small">Generation history${active.length>1?' · '+active.length:''}</a>${active[0].label==='Book analysis'?`<button class="button ghost small" data-task-pause="${e(active[0].id)}">Pause</button>`:''}</div>`:'';
+  slot.innerHTML=active.length?`<div class="task-banner" role="status"><span class="spinner small-spinner"></span><div><strong>${e(active[0].label)} · ${active[0].status==='queued'?'Queued':'In progress'}</strong><span>${active[0].total?`${active[0].progress} of ${active[0].total} excerpts saved. `:''}You can leave this page and return when it’s ready.</span></div><a href="${e(active[0].url||'/overview')}" class="button ghost small">Open project${active.length>1?' · '+active.length:''}</a>${active[0].label==='Book analysis'?`<button class="button ghost small" data-task-pause="${e(active[0].id)}">Pause</button>`:''}</div>`:'';
  }
  async function poll(){
   if(checking||document.hidden)return;checking=true;

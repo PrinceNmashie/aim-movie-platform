@@ -7,15 +7,16 @@ window.AIMVoice=(()=>{
  function update(){
   const start=document.querySelector('#voice-start'),stop=document.querySelector('#voice-stop'),status=document.querySelector('#voice-status');
   if(start)start.hidden=active();if(stop)stop.hidden=!active();
+  if(status)status.hidden=phase==='idle'&&!!status.closest?.('.is-compact');
   if(status)status.textContent=({idle:'Speak naturally. MIA listens when you start talking.',connecting:'Connecting your microphone…',listening:'Listening · speak naturally',thinking:'MIA is thinking…',speaking:'MIA is speaking',stopping:'Saving the conversation…'})[phase]||phase;
  }
- function controls(){return `<div class="voice-toolbar"><div class="row wrap"><button type="button" class="button secondary small" id="voice-start" data-action="voice-start" ${!supported() || !S.configured.openai || !S.platform.paid_enabled?'disabled':''}>◉ Talk with MIA</button><button type="button" class="button primary small" id="voice-stop" data-action="voice-stop" hidden>■ Stop conversation</button><span id="voice-status" role="status"></span></div><p class="hint">MIA uses an AI voice. Press Stop to turn off your microphone.</p>${S.platform.user.role==='admin'?'<p class="hint">Uses the server OpenAI API balance. Stops on navigation, 90 seconds of inactivity or the 10-minute limit. Spoken turns are saved to this conversation.</p>':''}<audio id="aim-voice-audio" controls hidden></audio></div>`;}
+ function controls(compact=false){return `<div class="voice-toolbar ${compact?'is-compact':''}"><div class="row wrap"><button type="button" class="button secondary small" id="voice-start" data-action="voice-start" ${!supported() || !S.configured.openai || !S.platform.paid_enabled?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"/></svg>Talk with MIA</button><button type="button" class="button primary small" id="voice-stop" data-action="voice-stop" hidden>■ Stop conversation</button><span id="voice-status" role="status"></span></div>${compact?'':'<p class="hint">MIA uses an AI voice. Press Stop to turn off your microphone.</p>'}<audio id="aim-voice-audio" controls hidden></audio></div>`;}
  function row(item,role){
   if(turns.has(item))return turns.get(item);
   const thread=document.querySelector('#chat-thread');if(!thread)return null;
   const node=document.createElement('div');node.className='message '+(role==='user'?'user':'ai');
   node.innerHTML=`<span class="avatar ${role==='assistant'?'ai':''}">${role==='user'?'Y':'M'}</span><div class="message-body"><div class="message-author">${role==='user'?'You · voice':'MIA · voice'}</div><div class="message-copy"></div></div>`;
-  thread.append(node);const t={role,text:'',node:node.querySelector('.message-copy'),phase:'pending'};turns.set(item,t);thread.scrollTop=thread.scrollHeight;return t;
+  thread.append(node);if(typeof showConversationStarted==='function')showConversationStarted();const t={role,text:'',node:node.querySelector('.message-copy'),phase:'pending'};turns.set(item,t);thread.scrollTop=thread.scrollHeight;return t;
  }
  function persist(item,role,text,status='complete'){
   if(!sid)return;
