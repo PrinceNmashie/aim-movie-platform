@@ -25,7 +25,7 @@ _GUARD = threading.Lock()
 _PROJECT_LOCKS = {}
 LEASE = 120
 ACTIVE = ('queued', 'running', 'waiting')
-LONG_PATHS = re.compile(r'^/api/(?:chat(?:/retry)?|generate/(?:vision|characters|script|director)|characters/[^/]+/image|ensemble|render/(?:submit|first-frame)|jobs/[^/]+/(?:last-frame|continue)|sequence/combine|source/(?:upload|analyze-next|analyze-all|synthesize)|community/submit)$')
+LONG_PATHS = re.compile(r'^/api/(?:generate/(?:vision|characters|script|director)|characters/[^/]+/image|ensemble|render/(?:submit|first-frame)|jobs/[^/]+/(?:last-frame|continue)|sequence/combine|source/(?:upload|analyze-next|analyze-all|synthesize)|community/submit)$')
 
 def project_lock():
     with _GUARD:return _PROJECT_LOCKS.setdefault(str(store.db_path()),threading.RLock())

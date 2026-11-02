@@ -26,17 +26,34 @@ def client(key, timeout=180):
     return OpenAI(api_key=key, timeout=timeout, max_retries=0)
 
 def chat(key, model, messages, vision):
+    """Return the reply and confirmed story notes in one model request."""
     history = [{'role': m['role'], 'content': m['content']} for m in messages[-40:]]
     response = usage_ledger.call('chat',model,lambda: client(key).responses.create(
         model=model,
-        instructions=SYSTEM + '\nCurrent creative brief:\n' + json.dumps(vision, ensure_ascii=False),
-        input=history, max_output_tokens=6000, store=False,
+        instructions=SYSTEM + '''\nReturn one JSON object with "reply" (your concise conversational reply) and
+"overview" (the current story details). The overview keys are title, premise, genre,
+setting, main_character, central_conflict, visual_style. Each value is a short string
+or null when unknown. Use only facts stated or accepted by the creator, or their
+existing creative brief. Your own unaccepted suggestions do not count as confirmed
+details. Apply their latest corrections, and use null if they unset a detail. Never
+invent a title or treat your question as an answer. Do not generate the full brief
+here. The reply should usually be 1–3 sentences and one useful question.
+Current project and earlier story notes:\n''' + json.dumps(vision, ensure_ascii=False),
+        input=history, text={'format': {'type': 'json_object'}},
+        max_output_tokens=6000, store=False,
         **({'reasoning': {'effort': 'low'}} if model.startswith('gpt-6') else {})))
     if getattr(response, 'status', '') == 'incomplete':
         raise ValueError('The model stopped before finishing the reply. Retry or choose another GPT model.')
     if not response.output_text:
         raise ValueError('The model returned no reply. Try again or choose another GPT model.')
-    return response.output_text
+    try:
+        result=json.loads(response.output_text)
+    except (TypeError,ValueError):
+        # Older compatible providers may still return a plain conversational reply.
+        return response.output_text
+    if not isinstance(result,dict) or not isinstance(result.get('reply'),str) or not result['reply'].strip():
+        raise ValueError('MIA returned an incomplete reply. Please retry.')
+    return result
 
 def structured(key, model, task, material, schema_hint):
     # JSON mode checks input text, so include the format instruction here too.

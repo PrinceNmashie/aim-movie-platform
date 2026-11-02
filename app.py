@@ -253,7 +253,7 @@ def snapshot():
     assemblies = store.get('assemblies', [])
     for item in assemblies:
         item['video_url'] = '/assembly/' + item['id'] if (store.data_dir() / Path(item['path']).name).is_file() else None
-    return {'workspace_id': studio.workspace_id(), 'vision': vision, 'characters': chars['characters'],
+    return {'workspace_id': studio.workspace_id(), 'vision': vision, 'conversation_overview':store.get('conversation_overview',{}), 'characters': chars['characters'],
             'tasks': background_tasks.project_tasks(creator_portal.user()['id'], creator_portal.g.project_id) if creator_portal.user() else [],
             'platform': platform_state, 'source': book_source.snapshot(),
             'script': script, 'director': director, 'messages': store.messages(), 'statuses': statuses,
@@ -365,6 +365,21 @@ def refresh_models():
     store.save_settings({'text_models': text_models or TEXT_MODELS, 'image_models': image_models or IMAGE_MODELS})
     return jsonify(snapshot())
 
+def save_conversation_reply(result):
+    reply=result.get('reply') if isinstance(result,dict) else result
+    if not isinstance(reply,str) or not reply.strip():
+        raise ValueError('MIA returned an incomplete reply. Please retry.')
+    if isinstance(result,dict) and isinstance(result.get('overview'),dict):
+        notes=store.get('conversation_overview',{})
+        if not isinstance(notes,dict):notes={}
+        for key in ('title','premise','genre','setting','main_character','central_conflict','visual_style'):
+            if key not in result['overview']:continue
+            value=result['overview'][key]
+            if value is None:notes[key]=''
+            elif isinstance(value,str):notes[key]=value.strip()[:1200 if key=='premise' else 300]
+        store.put('conversation_overview',notes)
+    store.append_message('assistant',reply.strip())
+
 @app.post('/api/chat')
 @mutation
 def chat():
@@ -374,8 +389,8 @@ def chat():
     store.append_message('user', message)
     studio.invalidate('vision')
     store.record('Idea', 'Creator added to the creative conversation')
-    reply = ai_layers.chat(cfg('OPENAI_API_KEY'), preferences()['model'], store.messages(), {**store.get('vision', {}), 'source_material': book_source.context()})
-    store.append_message('assistant', reply)
+    reply = ai_layers.chat(cfg('OPENAI_API_KEY'), preferences()['model'], store.messages(), {**store.get('vision', {}), 'conversation_overview':store.get('conversation_overview',{}), 'source_material': book_source.context()})
+    save_conversation_reply(reply)
     return jsonify(snapshot())
 
 @app.post('/api/chat/retry')
@@ -384,8 +399,8 @@ def retry_chat():
     messages = store.messages()
     if not messages or messages[-1]['role'] != 'user':
         raise ValueError('There is no unanswered message to retry.')
-    reply = ai_layers.chat(cfg('OPENAI_API_KEY'), preferences()['model'], messages, {**store.get('vision', {}), 'source_material': book_source.context()})
-    store.append_message('assistant', reply)
+    reply = ai_layers.chat(cfg('OPENAI_API_KEY'), preferences()['model'], messages, {**store.get('vision', {}), 'conversation_overview':store.get('conversation_overview',{}), 'source_material': book_source.context()})
+    save_conversation_reply(reply)
     return jsonify(snapshot())
 
 @app.post('/api/chat/clear')
@@ -394,6 +409,7 @@ def clear_chat():
     options=body()
     if options.get('confirm') is not True:raise ValueError('Confirm that you want to clear this conversation.')
     with store.connect() as c:c.execute('DELETE FROM chat_messages')
+    store.put('conversation_overview',{})
     sessions=store.get('live_voice_sessions',{})
     for entry in sessions.values():entry['cleared']=True;entry['closed']=True
     store.put('live_voice_sessions',sessions)
@@ -442,13 +458,14 @@ def generate(stage):
     messages = store.messages()
     vision = store.get('vision', {})
     chars = characters_value()
-    if stage == 'vision' and not messages:
-        raise ValueError('Tell MIA your movie idea first, or write a brief manually.')
+    source_material = book_source.context()
+    if stage == 'vision' and not messages and not source_material:
+        raise ValueError('Describe a movie idea, select story excerpts, or write a brief manually.')
     if stage != 'vision':
         require_approved(studio.STAGES[studio.STAGES.index(stage) - 1])
     material = {'conversation': messages, 'vision': vision, 'characters': chars,
                 'screenplay': store.get('script', {}), 'existing_draft': store.get(stage, {}),
-                'creator_revision_instructions': instructions, 'source_material': book_source.context()}
+                'creator_revision_instructions': instructions, 'source_material': source_material}
     tasks = {'vision': ('Vision Manager', ai_layers.VISION_SCHEMA), 'characters': ('Character Art Director', ai_layers.CHARACTER_SCHEMA),
              'script': ('Screenwriter', ai_layers.SCRIPT_SCHEMA), 'director': ('Film Director', ai_layers.DIRECTOR_SCHEMA)}
     task, schema = tasks[stage]

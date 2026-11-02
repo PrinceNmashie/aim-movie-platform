@@ -10,19 +10,20 @@ from urllib.parse import quote
 def movie_summary(project, directory, shared=False):
     directory = Path(directory)
     database = directory / 'aim.sqlite'
-    state, jobs, has_messages = {}, [], False
+    state, jobs, has_messages, has_source = {}, [], False, False
     updated = project['created']
     if database.is_file():
         try:
             with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True, timeout=5)) as connection:
                 tables = {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                 if 'project_state' in tables:
-                    keys = ('vision', 'workflow_meta', 'characters', 'ensemble', 'job_meta', 'assemblies')
-                    for key, raw in connection.execute('SELECT key,value FROM project_state WHERE key IN (?,?,?,?,?,?)', keys):
+                    keys = ('vision', 'workflow_meta', 'characters', 'ensemble', 'job_meta', 'assemblies', 'conversation_overview')
+                    for key, raw in connection.execute('SELECT key,value FROM project_state WHERE key IN (?,?,?,?,?,?,?)', keys):
                         try:
                             state[key] = json.loads(raw)
                         except (TypeError, ValueError):
                             pass
+                    has_source=bool(connection.execute("SELECT 1 FROM project_state WHERE key='book_source' AND value NOT IN ('null','{}')").fetchone())
                 if 'chat_messages' in tables:
                     has_messages = bool(connection.execute('SELECT 1 FROM chat_messages LIMIT 1').fetchone())
                 if 'jobs' in tables:
@@ -33,11 +34,14 @@ def movie_summary(project, directory, shared=False):
             pass
 
     vision = state.get('vision') if isinstance(state.get('vision'), dict) else {}
+    notes = state.get('conversation_overview') if isinstance(state.get('conversation_overview'), dict) else {}
     workflow = state.get('workflow_meta') if isinstance(state.get('workflow_meta'), dict) else {}
     approved = workflow.get('approved') or {}
     stale = workflow.get('stale') or []
     ready = lambda stage: isinstance(approved, dict) and bool(approved.get(stage)) and stage not in stale
     stage, page, next_step, action = 'Develop', 'idea', 'Tell MIA your movie idea', 'Start your movie'
+    if has_source:
+        page, next_step, action = 'source', 'Choose your story excerpts and adaptation direction', 'Continue adaptation'
     if has_messages or vision.get('logline'):
         page, next_step, action = 'brief', 'Complete your creative brief', 'Continue creative brief'
     if ready('vision'):
@@ -79,8 +83,8 @@ def movie_summary(project, directory, shared=False):
             cover_url = f"/api/platform/projects/{project['id']}/cover/{quote(path.name, safe='')}?v={path.stat().st_mtime_ns}"
             break
     return {
-        'id': project['id'], 'title': str(vision.get('title') or project['name']),
-        'description': str(vision.get('logline') or 'A new story, ready for your direction.'),
+        'id': project['id'], 'title': str(vision.get('title') or notes.get('title') or project['name']),
+        'description': str(vision.get('logline') or notes.get('premise') or 'A new story, ready for your direction.'),
         'created': project['created'], 'updated': updated, 'stage': stage,
         'next_page': page, 'next_step': next_step, 'action': action,
         'url': f"/{page}?project={project['id']}", 'cover_url': cover_url,
