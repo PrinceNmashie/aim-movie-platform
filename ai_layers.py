@@ -28,6 +28,10 @@ def client(key, timeout=180):
 def chat(key, model, messages, vision):
     """Return the reply and confirmed story notes in one model request."""
     history = [{'role': m['role'], 'content': m['content']} for m in messages[-40:]]
+    # JSON mode validates input messages, not just the top-level instructions.
+    # Keep this outside the history limit and out of the saved conversation.
+    history.insert(0, {'role': 'developer', 'content':
+        'Return a JSON object with "reply" and "overview" as described in the instructions.'})
     response = usage_ledger.call('chat',model,lambda: client(key).responses.create(
         model=model,
         instructions=SYSTEM + '''\nReturn one JSON object with "reply" (your concise conversational reply) and
