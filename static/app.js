@@ -54,6 +54,7 @@ function setDirty(value) {
 function setBusy(value, label='MIA is working on your movie…', copy='Your saved work will stay available.') {
   busy = value; $('#busy-overlay').hidden = !value; $('#busy-title').textContent = label; $('#busy-copy').textContent = copy;
   document.body.setAttribute('aria-busy',String(value));
+  if(typeof updateRenderReview==='function')updateRenderReview();
 }
 async function api(path, data) {
   const opts = {headers:{'X-AIM-Token':token,'X-Workspace-ID':S?.workspace_id || ''}};
@@ -184,31 +185,11 @@ function continuationPanel() {
   if(!c.source_job_id)return '';
   const source=S.jobs.find(j=>j.id===c.source_job_id);
   const frame=S.references[c.slot]?.url;
-  const firstFrame=S.settings.video_provider==='runway' ? S.settings.runway_mode==='first_frame'&&S.settings.runway_start_slot===c.slot : S.settings.wan_mode==='first_frame';
-  const copy=firstFrame ? 'The selected frame starts the new clip. Other saved reference images are not sent in this mode.' : (S.settings.video_provider==='alibaba'?S.settings.wan_mode==='text':S.settings.runway_mode==='text') ? 'Text-only mode sends no images. Choose “Start from one scene frame” above to continue from the saved frame.' : 'Select the continuity picture as the starting frame above to use it for the next clip.';
-  return `<section class="panel continuity-panel"><div class="panel-title"><div><div class="subtle-label">CONTINUE THE SCENE</div><h3>Pick up where the previous clip ended.</h3><p>Picture ${c.slot==='ref_a' ? '1' : '2'} holds its last frame. Describe the next moment.</p></div>${button('Clear continuation','clear-ref','ghost small',`data-slot="${esc(c.slot)}"`)}</div><div class="continuity-layout">${frame ? `<img class="continuity-frame" src="${esc(frame)}" alt="Last frame of the previous clip">` : ''}<div>${field('What happens next?',c.next_action,'next_action',{area:true,rows:3,placeholder:'The fighter regains his balance and steps back while the other lowers his fist.'})}<div class="row wrap" style="margin-top:12px">${button('Build continuation prompt','compile-continuation','primary')}${source ? link('View previous clip','library','ghost small') : ''}</div></div></div><p class="hint">${copy}</p></section>`;
+  const firstFrame=S.settings.video_provider==='runway' ? S.settings.runway_mode==='first_frame'&&S.settings.runway_start_slot===c.slot : S.settings.wan_mode==='first_frame'&&S.settings.wan_start_slot===c.slot;
+  const copy=firstFrame ? 'The selected frame starts the new clip. Other saved reference images are not sent in this mode.' : (S.settings.video_provider==='alibaba'?S.settings.wan_mode==='text':S.settings.runway_mode==='text') ? 'Text-only mode sends no images. Choose Opening image in Advanced settings to continue from the saved final image.' : 'Use the saved final image as the opening image to continue from this exact moment.';
+  return `<section class="panel continuity-panel" id="review-continuation"><div class="panel-title"><div><div class="subtle-label">CONTINUE THE SCENE</div><h3>Pick up where the previous clip ended.</h3><p>Picture ${c.slot==='ref_a' ? '1' : '2'} holds its last frame. Describe the next moment.</p></div>${button('Clear continuation','clear-ref','ghost small',`data-slot="${esc(c.slot)}"`)}</div><div class="continuity-layout">${frame ? `<img class="continuity-frame" src="${esc(frame)}" alt="Last frame of the previous clip">` : ''}<div>${field('What happens next?',c.next_action,'next_action',{area:true,rows:3,placeholder:'The fighter regains his balance and steps back while the other lowers his fist.'})}<div class="row wrap" style="margin-top:12px">${button('Build continuation prompt','compile-continuation','primary')}${source ? link('View previous clip','library','ghost small') : ''}</div></div></div><p class="hint">${copy}</p></section>`;
 }
-function renderPage() {
-  const shots=S.director.shots||[],wan=S.settings.video_provider==='alibaba',prefs=S.settings;
-  const choices=durationChoices(),planned=shots.find(s=>s.id===S.selected_shot)?.duration_seconds;
-  const durationNote=planned!=null&&!choices.includes(Number(planned))?notice('This shot is planned for '+planned+' seconds. The selected model uses '+S.render_duration+' seconds; your plan stays saved.'):'';
-  const checks=wan?[[S.configured.alibaba,'Alibaba connection'],[true,'Wan 3.0 · 2–30 seconds']]:[[S.configured.runway,'Runway connection'],[true,runwayModel()?.name||'Selected model']];
-  const connected=wan?S.configured.alibaba:S.configured.runway;
-  return heading('06 / PRODUCTION','Bring your shot to life.','Choose a model, set the action, and generate.',link('Video library','library','ghost small'))+
-    providerPanel()+characterReferenceSummary()+durationNote+(!connected?notice(isAdmin()?`Configure your ${wan?'Alibaba':'Runway Developer'} connection. ${link('Open settings','settings','ghost small')}`:'This generator is temporarily unavailable. Please choose another.'):'')+
-    (S.prompt_needs_refresh&&S.render_prompt?notice('Your project changed. Review the prompt before generating.'):'')+continuationPanel()+
-    `<div class="render-layout"><section class="panel"><div class="panel-title"><h3>The shot</h3><span class="badge">${wan?'Wan 3.0':esc(runwayModel()?.name||'Runway')}</span></div>
-    ${shots.length?`<div class="row" style="margin-bottom:22px"><label class="field" style="flex:1"><span>Planned shot</span><select id="render-shot"><option value="">Select a shot…</option>${shots.map(s=>`<option value="${esc(s.id)}" ${S.selected_shot===s.id?'selected':''}>${esc(s.id+' · '+s.shot_type+' · '+s.duration_seconds+' sec')}</option>`).join('')}</select></label>${button('Build prompt','compile-shot','secondary','style="margin-top:23px"')}</div>`:''}
-    ${field('Video prompt',S.render_prompt,'render_prompt',{area:true,rows:10,placeholder:'Describe the action, setting and camera movement.'})}
-    <div class="render-options"><label>Length <select id="render-duration">${choices.map(n=>`<option value="${n}" ${n===Number(S.render_duration)?'selected':''}>${n} seconds</option>`).join('')}</select><strong id="duration-value" hidden>${S.render_duration}s</strong></label><span class="badge" id="runway-prompt-count" hidden></span></div>
-    <!-- GENERATION_TIME_ESTIMATE_ELEMENT: remove this comment wrapper to enable.
-    <p class="hint" id="generation-time-estimate" hidden></p>
-    -->
-    ${adminInfo(`<p class="hint">${wan?'Wan uses whole seconds. In image-reference mode, refer to supplied images as Image 1 and Image 2.':`Selected model: ${esc(prefs.runway_model)}. Prompt limit: ${runwaySpec().prompt_max} UTF-16 units.`}</p>`)}
-    <div class="row between wrap" style="margin-top:25px">${button('Save prompt','save-render','secondary')}${button('Generate video <span class="arrow">→</span>','submit-render','primary',`id="render-generate" ${!videoReady()?'disabled':''}`)}</div>${adminInfo(`<p class="hint">Generate submits a paid request to ${wan?'Alibaba Model Studio':'Runway Developer'}. Review the estimate above first.</p>`)}</section>
-    <aside class="render-preview">${(wan?prefs.wan_mode:prefs.runway_mode)==='first_frame'?`<div class="row wrap" style="margin-bottom:16px">${button('Create scene starting frame','create-first-frame','secondary small',!S.selected_shot||!S.configured.openai?'disabled':'')}</div>`:''}${['ref_a','ref_b'].map((slot,i)=>`<div class="ref-slot"><strong>${referenceRole(slot)} ${S.references[slot].binding?.character_id?' · '+esc(S.characters.find(c=>c.id===S.references[slot].binding.character_id)?.name||''):''}</strong><div class="sheet-view">${S.references[slot].url?`<img src="${esc(S.references[slot].url)}" alt="Picture ${i+1}">`:'<span class="muted">No image selected</span>'}</div><div class="row">${uploadButton('Upload reference','reference',`data-slot="${slot}"`)}${S.references[slot].url?button('Clear reference','clear-ref','ghost small',`data-slot="${slot}"`):''}${link('Manage characters','characters','ghost small')}</div></div>`).join('')}
-    ${adminInfo(`<div class="panel"><h3>Connection checks</h3>${checks.map(([ok,copy])=>`<div class="check-row"><span class="${ok?'ok':'missing'}">${ok?'✓':'○'}</span>${esc(copy)}</div>`).join('')}</div>`)}</aside></div>`;
-}
+function renderPage() {return renderReviewPage();}
 
 function clipLabel(job) {
   const index=S.jobs.findIndex(j=>j.id===job.id);
@@ -350,6 +331,7 @@ async function handleAction(action,el) {
   if(action==='source-stop')return platformAction(action,el);
   if(busy || bookAnalysisRunning) return;
   if(AIMVoice.active() && !action.startsWith('voice-') && !['clear-conversation','clear-composer'].includes(action))return toast('Stop your voice conversation before changing the project.',true);
+  if(await renderReviewAction(action,el))return;
   if(await creationAction(action,el))return;
   if(await platformAction(action,el))return;
   if(action.startsWith('generate-') && ['vision','characters','script','director'].includes(action.slice(9))) return generate(action.slice(9));
@@ -423,8 +405,8 @@ async function handleAction(action,el) {
     }
     case 'remove-shot':S.director=collectShots();S.director.shots.splice(Number(el.dataset.index),1);render();setDirty(true);return;
     case 'compile-shot':
-      if(dirty && $('[data-field="render_prompt"]').value.trim() && !await confirmAction('Replace the current prompt?','The selected shot and its character identities will build a new prompt. Save your current prompt first if you want to keep your edits.','Build prompt')) return;
-      return run('Building the video prompt…',()=>api('render/compile',{shot_id:$('#render-shot').value}),{message:'Prompt ready to review.'});
+      if(dirty && $('[data-field="render_prompt"]').value.trim() && !await confirmAction('Replace these video instructions?','This rebuilds the instructions from the selected scene and character references. Cancel to keep your current edits.','Update instructions')) return;
+      return run('Building the video instructions…',async()=>{await api('render/compile',{shot_id:$('#render-shot').value});renderInstructionsDirty=renderInstructionsOpen=false;renderReviewErrors=[];},{message:'Scene ready to review.'});
     case 'save-render':return run('Saving the video prompt…',()=>api('render/save',renderOptions()),{message:'Prompt saved.'});
     case 'use-text-only':return changeVideoOption({dataset:{videoOption:S.settings.video_provider==='alibaba'?'wan_mode':'runway_mode'},value:'text',type:'select-one'});
     case 'use-image-references':return changeVideoOption({dataset:{videoOption:S.settings.video_provider==='alibaba'?'wan_mode':'runway_mode'},value:'reference',type:'select-one'});
@@ -432,12 +414,19 @@ async function handleAction(action,el) {
     case 'choose-reference-model':return changeVideoModel('wan3','reference');
     case 'create-first-frame':return run('Creating your starting frame…',()=>api('render/first-frame',{}),{message:'Starting frame ready.'});
     case 'submit-render': {
-      const options=renderOptions();const r=await AIMTasks.request('render/preflight',{method:'POST',headers:{'Content-Type':'application/json','X-AIM-Token':token,'X-Workspace-ID':S.workspace_id},body:JSON.stringify(options)},S.workspace_id);
+      if(renderPreflightBusy)return;
+      renderPreflightBusy=true;updateRenderReview();
+      try {
+      const workspace=S.workspace_id,options=renderOptions();const r=await AIMTasks.request('render/preflight',{method:'POST',headers:{'Content-Type':'application/json','X-AIM-Token':token,'X-Workspace-ID':workspace},body:JSON.stringify(options)},workspace);
+      if(page!=='render'||S.workspace_id!==workspace)return;
+      if(JSON.stringify(renderOptions())!==JSON.stringify(options))return toast('Your video settings changed. Review them and choose Generate video again.');
       const checks=await r.json();if(!r.ok)throw new Error(checks.error||'The preflight check failed.');
-      if(checks.errors.length)return toast(checks.errors.join(' '),true);
-      const quote=checks.estimate?.estimated_cost_usd;const copy=[...(checks.warnings||[]),quote!=null?'Estimated generation cost: $'+Number(quote).toFixed(2)+'.':'','Generate this clip?'].filter(Boolean).join('\n\n');
-      if(!await confirmAction('Review before generating',copy,'Generate clip'))return;
-      return run('Submitting your clip…',()=>api('render/submit',options),{dest:'library',message:'Render submitted.'});
+      if(checks.errors.length){renderReviewErrors=checks.errors;await api('state');S.render_prompt=options.prompt;S.render_duration=options.duration;render();reviewReveal('review-submit-errors');return;}
+      const quote=checks.estimate?.estimated_cost_usd;const copy=[quote!=null?'Estimated cost: $'+Number(quote).toFixed(2)+'. Final billing may differ.':'The final cost will be billed by the video provider.',reviewMode()==='first_frame'?'Your video will begin with the opening image you confirmed.':'Your video will use the scene and image-use settings shown on the review page.',...(checks.warnings||[]),'Generate this video now?'].filter(Boolean).join('\n\n');
+      if(!await confirmAction('Generate this video?',copy,'Generate video'))return;
+      if(page!=='render'||S.workspace_id!==workspace||JSON.stringify(renderOptions())!==JSON.stringify(options))return toast('Your project or video settings changed. Review the video before generating.');
+      return await run('Submitting your clip…',()=>api('render/submit',options),{dest:'library',message:'Render submitted.'});
+      }finally{renderPreflightBusy=false;updateRenderReview();}
     }
     case 'refresh-job':return run('Checking your render…',()=>api('jobs/'+el.dataset.id+'/refresh',{}));
     case 'refresh-models':return run('Loading available models…',()=>api('models/refresh',{}),{message:'Model list updated for your API account.'});
