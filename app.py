@@ -22,6 +22,7 @@ import runway_client
 import runway_models
 import store
 import studio
+import render_review
 import video_tools
 import video_providers
 import wan_client
@@ -264,8 +265,11 @@ def snapshot():
             'voice': {'transcription_model': cfg('OPENAI_TRANSCRIPTION_MODEL') or 'gpt-transcribe', 'max_seconds': 120, 'max_bytes': 10 * 1024 * 1024},
             'references': refs, 'ensemble': ensemble, 'jobs': jobs,
             'render_prompt': store.get('render_prompt', ''), 'selected_shot': store.get('selected_shot', ''),
+            'render_prompt_custom': store.get('render_prompt_custom', False),
             'render_duration': fitting_duration(store.get('render_duration', 5)),
             'prompt_needs_refresh': store.get('prompt_needs_refresh', False),
+            'render_review': {'issues': render_review.workflow_issues(),
+                              'opening': render_review.opening_snapshot(preferences(), asset_path)},
             'limits': video_providers.limits(preferences()),
             'continuation': store.get('continuation', {}),
             'sequence': store.get('sequence', {'name': vision.get('title') or 'Untitled scene', 'clip_ids': []}),
@@ -744,6 +748,7 @@ def compile_prompt():
         raise ValueError('Choose a shot first.')
     attach_references(shot)
     store.put('render_prompt', studio.compile_shot(shot, store.get('vision', {}), characters_value(), preferences()))
+    store.put('render_prompt_custom', False)
     store.put('selected_shot', sid)
     store.put('render_duration', fitting_duration(shot.get('duration_seconds', 5)))
     store.put('prompt_needs_refresh', False)
@@ -801,6 +806,7 @@ def render_preflight(options):
     try:
         clear_excluded_references()
         settings=video_providers.options(options,preferences());prompt=str(options.get('prompt','')).strip()
+        errors.extend(item['message'] for item in render_review.workflow_issues())
         if not prompt:raise ValueError('Add a video prompt first.')
         images={slot:asset_path(store.get(slot)) for slot in ('ref_a','ref_b')}
         blobs={slot:p.read_bytes() if p else None for slot,p in images.items()}
@@ -809,8 +815,6 @@ def render_preflight(options):
         selected=store.get('selected_shot');shots=store.get('director',{}).get('shots',[]);shot=next((s for s in shots if s['id']==selected),None)
         if selected and not shot:errors.append('The selected shot changed. Choose a shot and build its prompt again.')
         if shot:
-            if store.get('prompt_needs_refresh'):warnings.append('Earlier creative choices changed. Rebuild the prompt to include them.')
-            if not store.get('workflow_meta',{}).get('approved',{}).get('director'):warnings.append('Review and approve the latest shot plan before generating your final version.')
             if settings['duration']!=float(shot.get('duration_seconds',5)):warnings.append('This generation uses a different duration from the selected shot.')
             cast={c['id'].casefold() for c in characters_value()['characters']}|{c['name'].casefold() for c in characters_value()['characters']}
             if any(str(x).casefold() not in cast for x in shot.get('characters',[])):warnings.append('This shot names a character missing from your current cast.')
@@ -821,8 +825,10 @@ def render_preflight(options):
         if mode=='first_frame':
             slot=settings['runway_start_slot'] if settings['video_provider']=='runway' else settings['wan_start_slot']
             binding=store.get('reference_bindings',{}).get(slot,{})
-            if binding.get('kind') in ('character','ensemble'):errors.append('This image is a character reference sheet, not an opening frame. Choose Image references with a supported model, or create a scene opening frame.')
-            if binding.get('kind')=='scene_frame' and shot and binding.get('shot_id')!=shot['id']:warnings.append('Your starting frame belongs to another shot. Check the composition before continuing.')
+            opening=render_review.opening_frame(settings,asset_path)
+            if opening['is_sheet']:errors.append('This image is a character reference sheet, not an opening image. Use it as a character reference, or choose a single scene image to begin your video.')
+            elif opening['wrong_shot']:errors.append('This opening image was made for a different scene. Choose or create an image for the scene you are generating.')
+            elif not opening['approved']:errors.append('Review the opening image and choose Use this opening image before generating. Your video will begin with that exact image.')
         elif mode=='text' and any(c.get('use_as_reference', True) and studio.selected_image(c) for c in characters_value()['characters']):warnings.append('Text-only generation does not send your selected character references. Choose Image references to use them.')
         if store.get('continuation',{}).get('source_job_id') and mode=='text':warnings.append('This continuation uses text only. Select starting-frame mode to carry forward the previous clip’s last frame.')
         return {'errors':errors,'warnings':warnings,'estimate':video_providers.quote(settings,settings['duration'])}
@@ -832,6 +838,22 @@ def render_preflight(options):
 @mutation
 def check_render():
     return jsonify(render_preflight(body()))
+
+@app.post('/api/render/approve-opening')
+@mutation
+def approve_opening_image():
+    if body().get('confirm') is not True:
+        raise ValueError('Confirm that your video should begin with the displayed opening image.')
+    opening=render_review.opening_frame(preferences(),asset_path)
+    if not opening['required'] or not opening['exists']:
+        raise ValueError('Choose an opening image first.')
+    if opening['is_sheet']:
+        raise ValueError('A character reference sheet cannot be an opening image. Choose a single scene image instead.')
+    if opening['wrong_shot']:
+        raise ValueError('Choose an opening image for the scene you are generating.')
+    store.put('approved_opening_frame',opening['_key'])
+    store.record('Opening image','Creator confirmed the exact image that will begin the video')
+    return jsonify(snapshot())
 
 @app.post('/api/render/first-frame')
 @mutation
@@ -854,6 +876,8 @@ def save_render_options(options):
     store.save_settings(video_providers.validate_settings(options))
     store.put('render_prompt', prompt)
     store.put('render_duration', duration)
+    shot=next((s for s in store.get('director',{}).get('shots',[]) if s.get('id')==store.get('selected_shot')),None)
+    store.put('render_prompt_custom',bool(shot and prompt!=studio.compile_shot(shot,store.get('vision',{}),characters_value(),settings)))
     store.put('prompt_needs_refresh', False)
     return prompt, duration
 
