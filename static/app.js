@@ -363,6 +363,8 @@ async function handleAction(action,el) {
       }return;
     case 'voice-start':return AIMVoice.begin();
     case 'voice-stop':return AIMVoice.stop();
+    case 'voice-mute':return AIMVoice.toggleMute();
+    case 'voice-type':return AIMVoice.typeInstead();
     case 'voice-interrupt':return AIMVoice.interrupt();
     case 'voice-cancel':return AIMVoice.cancel();
     case 'voice-read-last':return AIMVoice.speakLast();
