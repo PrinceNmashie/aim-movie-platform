@@ -20,7 +20,13 @@ import video_tools
 import notifications
 import background_tasks
 import studio_dashboard
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageOps
+from pillow_heif import register_heif_opener
+
+register_heif_opener(thumbnails=False, depth_images=False, aux_images=False)
+
+AVATAR_FORMATS = ('JPEG', 'PNG', 'WEBP', 'AVIF', 'HEIF')
+AVATAR_MAX_BYTES = 20 * 1024 * 1024
 
 ROOT = store.DATA
 DB = ROOT / 'platform.sqlite'
@@ -103,6 +109,36 @@ def avatar_url(account):
 def avatar_directory(uid):
     if not re.fullmatch('[a-f0-9]{32}', uid):abort(404)
     return ROOT / 'users' / uid / 'profile'
+
+
+def avatar_jpeg(*, square):
+    request.max_content_length = AVATAR_MAX_BYTES + 1024 * 1024
+    upload = request.files.get('file')
+    if not upload:
+        abort(400, 'Choose a photo for your profile picture.')
+    blob = upload.read(AVATAR_MAX_BYTES + 1)
+    if not blob or len(blob) > AVATAR_MAX_BYTES:
+        abort(400, 'Choose a photo up to 20 MB.')
+    try:
+        with Image.open(io.BytesIO(blob), formats=AVATAR_FORMATS) as source:
+            if source.width * source.height > 50_000_000:
+                abort(400, 'Choose a photo up to 50 megapixels.')
+            if source.format != 'HEIF' and getattr(source, 'is_animated', False):
+                abort(400, 'Choose a still photo.')
+            source.draft('RGB', (2048, 2048))
+            source.thumbnail((2048, 2048), Image.Resampling.LANCZOS)
+            ImageOps.exif_transpose(source, in_place=True)
+            image = source.convert('RGB')
+        if square:
+            image = ImageOps.fit(image, (512, 512), method=Image.Resampling.LANCZOS)
+        output = io.BytesIO()
+        image.save(output, format='JPEG', quality=90)
+        output.seek(0)
+        return output
+    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError):
+        abort(400, 'That photo could not be opened. Choose a JPG, PNG, WebP, AVIF, HEIC or HEIF photo.')
+
+
 def payload():
     value=request.get_json(silent=True)
     if not isinstance(value,dict): abort(400,'Send a JSON object.')
@@ -374,22 +410,13 @@ def install(app,api):
         with db() as c:c.execute('UPDATE users SET name=?,bio=? WHERE id=?',(name,bio,user()['id']))
         return jsonify(ok=True)
 
+    @app.post('/api/account/avatar/preview')
+    def preview_avatar():
+        return send_file(avatar_jpeg(square=False), mimetype='image/jpeg')
+
     @app.post('/api/account/avatar')
     def upload_avatar():
-        upload=request.files.get('file')
-        if not upload:abort(400,'Choose a JPG, PNG or WebP profile picture.')
-        blob=upload.read(5*1024*1024+1)
-        if not blob or len(blob)>5*1024*1024:abort(400,'Use a profile picture under 5 MB.')
-        try:
-            with Image.open(io.BytesIO(blob)) as source:
-                if source.format not in ('JPEG','PNG','WEBP') or getattr(source,'is_animated',False):
-                    abort(400,'Use a still JPG, PNG or WebP image.')
-                if source.width*source.height>16_000_000:abort(400,'Use an image no larger than 16 million pixels.')
-                source.load()
-                image=ImageOps.fit(ImageOps.exif_transpose(source).convert('RGB'),(512,512),method=Image.Resampling.LANCZOS)
-            output=io.BytesIO();image.save(output,format='JPEG',quality=88)
-        except (UnidentifiedImageError,OSError,ValueError,Image.DecompressionBombError):
-            abort(400,'That image could not be read. Use a still JPG, PNG or WebP image.')
+        output = avatar_jpeg(square=True)
         uid=user()['id'];filename=uuid.uuid4().hex+'.jpg'
         with api['LOCK']:
             with db() as c:

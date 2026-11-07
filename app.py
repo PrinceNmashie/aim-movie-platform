@@ -425,7 +425,7 @@ def require_approved(stage):
         labels = {'vision': 'creative brief', 'characters': 'characters', 'script': 'script', 'director': 'shots'}
         raise ValueError('Review and approve your ' + labels[stage] + ' first.')
 
-def validate_draft(stage, value):
+def validate_draft(stage, value, allowed_durations=None):
     if stage == 'vision':
         if not isinstance(value.get('logline'), str) or not value['logline'].strip():
             raise ValueError('The brief has no premise. Try drafting it again.')
@@ -447,10 +447,11 @@ def validate_draft(stage, value):
                 item['id'] += '_' + str(index + 1)
             ids.add(item['id'])
             if stage == 'director':
-                try:
-                    item['duration_seconds'] = video_providers.validate_duration(max(1, min(30, float(item.get('duration_seconds', 5)))))
-                except (TypeError, ValueError):
-                    item['duration_seconds'] = 5
+                seconds = video_providers.validate_duration(item.get('duration_seconds', 5))
+                item['duration_seconds'] = (
+                    min(allowed_durations, key=lambda length: (abs(length - seconds), -length))
+                    if allowed_durations else seconds
+                )
     return value
 
 @app.post('/api/generate/<stage>')
@@ -473,14 +474,17 @@ def generate(stage):
     tasks = {'vision': ('Vision Manager', ai_layers.VISION_SCHEMA), 'characters': ('Character Art Director', ai_layers.CHARACTER_SCHEMA),
              'script': ('Screenwriter', ai_layers.SCRIPT_SCHEMA), 'director': ('Film Director', ai_layers.DIRECTOR_SCHEMA)}
     task, schema = tasks[stage]
+    allowed_durations = None
     if stage == 'director':
-        material['supported_clip_seconds'] = video_providers.limits(preferences())['durations']
-        material['continuity_plan'] = studio.planning_policy(vision, store.get('script', {}), material['supported_clip_seconds'])
-    result = validate_draft(stage, ai_layers.structured(cfg('OPENAI_API_KEY'), preferences()['model'], task, material, schema))
+        allowed_durations = video_providers.limits(preferences())['durations']
+        material['supported_clip_seconds'] = allowed_durations
+        material['continuity_plan'] = studio.planning_policy(vision, allowed_durations)
+    result = validate_draft(
+        stage, ai_layers.structured(cfg('OPENAI_API_KEY'), preferences()['model'], task, material, schema),
+        allowed_durations,
+    )
     if stage == 'characters':
         result = studio.merge_characters(result, chars)
-    if stage == 'director':
-        result = studio.consolidate_shots(result, video_providers.limits(preferences())['durations'])
     # Keep draft revisions for recovery, including human-edited prior drafts.
     revisions = store.get('draft_revisions', [])
     old = store.get(stage)
@@ -502,10 +506,6 @@ def save_draft(stage):
 @app.post('/api/approve/<stage>')
 @mutation
 def approve(stage):
-    if stage=='director':
-        current=store.get('director',{})
-        packed=studio.consolidate_shots(current,video_providers.limits(preferences())['durations'])
-        if packed!=current:studio.save('director',packed,'Packed connected action into continuous takes')
     studio.approve(stage)
     return jsonify(snapshot())
 
@@ -818,7 +818,7 @@ def render_preflight(options):
             if settings['duration']!=float(shot.get('duration_seconds',5)):warnings.append('This generation uses a different duration from the selected shot.')
             cast={c['id'].casefold() for c in characters_value()['characters']}|{c['name'].casefold() for c in characters_value()['characters']}
             if any(str(x).casefold() not in cast for x in shot.get('characters',[])):warnings.append('This shot names a character missing from your current cast.')
-        plan=studio.planning_policy(store.get('vision',{}),store.get('script',{}),video_providers.limits(settings)['durations'])
+        plan=studio.planning_policy(store.get('vision',{}),video_providers.limits(settings)['durations'])
         planned=sum(float(s.get('duration_seconds',0)) for s in shots)
         if shots and abs(planned-plan['target_seconds'])>max(2,plan['target_seconds']*.1):warnings.append('Your planned clips total '+str(round(planned,1))+' seconds; your movie target is '+str(plan['target_seconds'])+' seconds.')
         mode=settings['runway_mode'] if settings['video_provider']=='runway' else settings['wan_mode']

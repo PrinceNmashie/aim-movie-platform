@@ -14,42 +14,15 @@ CHAR_FIELDS = ['name', 'role', 'age', 'appearance', 'wardrobe', 'personality', '
 def fingerprint(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
-def planning_policy(vision,script,durations):
-    choices=sorted(set(int(x) for x in durations));maximum=max(choices)
-    try:target=float(vision.get('duration_seconds') or 30)
-    except (TypeError,ValueError):target=30
-    if not math.isfinite(target):target=30
-    target=max(choices[0],min(7200,round(target)))
-    scenes=max(1,len(script.get('scenes',[])));count=max(scenes,math.ceil(target/maximum))
-    # Distribute time rather than creating a fixed count of short action beats.
-    suggested=[];remaining=target
-    for i in range(count):
-        ideal=remaining/(count-i)
-        value=min(choices,key=lambda n:(abs(n-ideal),-n));suggested.append(value);remaining-=value
-    return {'target_seconds':target,'maximum_clip_seconds':maximum,'suggested_clip_count':count,
-            'suggested_durations':suggested,'strategy':'Preserve scene boundaries and the requested action. Prefer fewer longer continuous takes. Split only when necessary; explain each cut. Exact target may be impossible for discrete model durations.'}
-
-def consolidate_shots(value,durations):
-    """Pack connected action beats into supported continuous takes, respecting real cuts."""
-    choices=sorted(set(int(n) for n in durations));result=[]
-    for raw in value.get('shots',[]):
-        shot=dict(raw)
-        try:n=float(shot.get('duration_seconds',choices[0]))
-        except (TypeError,ValueError):n=choices[0]
-        if not math.isfinite(n):n=choices[0]
-        shot['duration_seconds']=min(choices,key=lambda v:(abs(v-n),-v))
-        previous=result[-1] if result else None
-        reason=str(shot.get('cut_reason','')).casefold()
-        real_cut=any(term in reason for term in ('creator','user requested','hard cut','jump cut','reverse angle','camera cut','camera change','new camera angle','time jump','time change','location change','new location','different location','flashback'))
-        if previous and shot.get('scene_id') and not real_cut and previous.get('scene_id')==shot.get('scene_id') and previous['duration_seconds']+shot['duration_seconds'] in choices:
-            previous['duration_seconds']+=shot['duration_seconds']
-            previous['characters']=list(dict.fromkeys([*previous.get('characters',[]),*shot.get('characters',[])]))
-            if shot.get('camera') and shot.get('camera')!=previous.get('camera'):
-                previous['camera']=str(previous.get('camera',''))+'; move smoothly into '+str(shot['camera'])+' within the same take'
-            for f in ('on_screen_action','continuity','sound','prompt'):
-                previous[f]=' '.join(str(x).strip() for x in (previous.get(f,''),shot.get(f,'')) if x)
-        else:result.append(shot)
-    return {**value,'shots':result}
+def planning_policy(vision, durations):
+    try:
+        target = float(vision.get('duration_seconds') or 30)
+    except (TypeError, ValueError, OverflowError):
+        target = 30
+    if not math.isfinite(target):
+        target = 30
+    return {'target_seconds': max(min(durations), min(7200, round(target))),
+            'maximum_clip_seconds': max(durations)}
 
 def workspace_id():
     current = store.get('workspace_id')
