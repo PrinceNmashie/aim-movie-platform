@@ -31,3 +31,32 @@
 .header-account .notification-label{display:none}
 .studio-back-link{color:#d1b575!important;white-space:nowrap}
 @media(max-width:600px){.header-account{gap:12px;margin-left:auto}.header-profile{width:37px;height:37px}.header-account .notification-menu summary{width:35px;height:35px}.header-account .notification-popover{top:66px}.platform-header nav{margin-left:0}}
+
+.avatar-editor .avatar-file-hint { margin-top:10px; }
+.upload-label:focus-within, #avatar-canvas:focus-visible { outline:2px solid var(--aim-gold); outline-offset:4px; }
+.upload-label:has(input:disabled) { opacity:.4; cursor:not-allowed; }
+#avatar-crop { max-height:calc(100dvh - 24px); overflow:auto; }
+#avatar-crop-status { margin:8px 0 16px; }
+#avatar-canvas {
+  display:block;
+  width:min(100%,232px);
+  height:auto;
+  margin:0 auto 16px;
+  border-radius:50%;
+  cursor:grab;
+  touch-action:none;
+}
+#avatar-canvas:active { cursor:grabbing; }
+.avatar-zoom { display:flex; align-items:center; gap:12px; }
+.avatar-zoom input { flex:1; min-width:0; accent-color:var(--aim-gold); }
+.avatar-crop-actions { margin-top:20px; justify-content:flex-end; }
+
+#main [data-draft-field][readonly], #profile-form [readonly] {
+  background:#ffffff05;
+  border-color:#ffffff10;
+  cursor:default;
+}
+.draft-controls { align-items:center; gap:8px; }
+.reference-choice label:has(input:disabled) { cursor:default; }
+.shot-planning-model { margin-bottom:18px; }
+.shot-planning-model select { width:100%; max-width:430px; }

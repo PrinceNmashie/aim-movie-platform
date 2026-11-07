@@ -7,6 +7,15 @@ const initials = value => (String(value || 'Character').split(/\s+/).slice(0,2).
 const token = $('meta[name="aim-token"]').content;
 let taskQueued=false;
 let S, page = location.pathname.slice(1) || 'overview', currentCID = null, dirty = false, busy = false, polling = false;
+let draftEdit = null;
+const draftEditors = {
+  vision: {page:'brief',label:'brief',fields:'#brief-form [data-field]'},
+  characters: {page:'characters',label:'character',fields:'#character-form [data-field], [name="character-reference-use"]'},
+  script: {page:'script',label:'screenplay',fields:'[data-group="script"], #script-form [data-group="scene"], #script-form [data-dialogue]'},
+  director: {page:'shots',label:'shot plan',fields:'#shots-form [data-group="shot"]'},
+  'shot-model': {page:'shots',label:'video model',fields:'#shot-planning-model'},
+  render: {page:'render',label:'video instructions',fields:'[data-field="render_prompt"], #render-duration'},
+};
 const steps = [
   ['idea','Your idea','A conversation to get started',null],
   ['brief','Creative brief','The direction of your movie','vision'],
@@ -22,7 +31,7 @@ function badge(status) {
   return `<span class="badge ${color}">${esc(text)}</span>`;
 }
 function button(text, action, klass='secondary', attrs='') {
-  return `<button class="button ${klass}" data-action="${action}" ${attrs}>${text}</button>`;
+  return `<button type="button" class="button ${klass}" data-action="${action}" ${attrs}>${text}</button>`;
 }
 function link(text, dest, klass='secondary') {
   return `<a href="/${dest}" data-nav="${dest}" class="button ${klass}">${text}</a>`;
@@ -42,6 +51,58 @@ function stale(stage) {
 }
 function reviewFooter(title, copy, back, action, label) {
   return `<div class="review-footer"><div><h3>${title}</h3><p>${copy}</p></div><div class="row">${link('Back',back,'ghost')}${button(label+' <span class="arrow">→</span>',action,'primary')}</div></div>`;
+}
+function draftControls(stage) {
+  const label = draftEditors[stage].label;
+  const attrs = `data-stage="${stage}"`;
+  const controls = draftEdit?.stage === stage
+    ? button('Save '+label,'save-draft','primary small',attrs) + button('Cancel','cancel-draft','ghost small',attrs)
+    : button('Edit '+label,'edit-draft','secondary small',attrs);
+  return `<div class="row wrap draft-controls">${controls}</div>`;
+}
+function applyDraftLocks() {
+  for (const [stage, editor] of Object.entries(draftEditors)) {
+    if (editor.page !== page) continue;
+    const locked = draftEdit?.stage !== stage;
+    $$(editor.fields).forEach(field=>{
+      field.dataset.draftField = stage;
+      if (field.tagName === 'SELECT' || field.type === 'radio') field.disabled = locked;
+      else field.readOnly = locked;
+    });
+  }
+  $$('[data-draft-operation]').forEach(control=>{
+    control.hidden = control.dataset.draftOperation !== draftEdit?.stage;
+  });
+  if (!draftEdit) return;
+  const stage = draftEdit.stage;
+  const allowed = `[data-draft-field="${stage}"], [data-draft-operation="${stage}"], [data-action="save-draft"], [data-action="cancel-draft"]`;
+  $$('#main input, #main textarea, #main select, #main button').forEach(control=>{
+    if (!control.matches(allowed)) control.disabled = true;
+  });
+}
+function startDraft(stage, newCharacter=false) {
+  if (draftEditors[stage]?.page !== page || draftEdit) return;
+  draftEdit = {stage,newCharacter};
+  if (stage === 'script' || stage === 'director') draftEdit.value = clone(S[stage]);
+  render();
+  draftEdit.initial = draftFieldValues(stage);
+  $(draftEditors[stage].fields)?.focus();
+  if (newCharacter) setDirty(true);
+}
+function draftFieldValues(stage) {
+  return $$(draftEditors[stage].fields).map(field=>field.type==='radio' ? field.checked : field.value);
+}
+function closeDraft(stage) {
+  draftEdit=null;
+  setDirty(false);
+  render();
+  focusDraftControl(stage);
+}
+function focusDraftControl(stage) {
+  const control = $(`[data-action="edit-draft"][data-stage="${stage}"]`);
+  const details = control?.closest('details');
+  if (details) details.open = true;
+  (control || $('#main')).focus();
 }
 function toast(message, error=false) {
   const item = document.createElement('div'); item.className = 'toast' + (error ? ' error' : ''); item.textContent = message;
@@ -93,7 +154,7 @@ async function navigate(dest, force=false) {
     try { await api(dest==='overview'?'platform/dashboard':'state'); }
     catch(error) { return toast(error.message,true); }
   }
-  page = dest; setDirty(false);
+  page = dest; draftEdit = null; setDirty(false);
   const path = '/' + dest;
   if (location.pathname !== path) history.pushState({},'',path);
   $('#sidebar').classList.remove('open');$('#menu-toggle').setAttribute('aria-expanded','false');
@@ -131,10 +192,10 @@ function idea() {return conversationPage();}
 
 function brief() {
   const v = S.vision;
-  return heading('02 / CREATIVE DIRECTION','Make the vision yours.','Review what MIA understood. Change anything before building your cast.',badge(S.statuses.vision)) + noKey() + stale('vision') +
+  return heading('02 / CREATIVE DIRECTION','Make the vision yours.','Review what MIA understood. Choose Edit brief to make changes.',`<div class="row wrap">${badge(S.statuses.vision)}${draftControls('vision')}</div>`) + noKey() + stale('vision') +
     `<form id="brief-form"><div class="grid-two"><section class="panel"><div class="panel-title"><h3>Your movie</h3></div><div class="field-grid">${field('Working title',v.title,'title',{full:true,placeholder:'Give your movie a name'})}${field('Premise',v.logline,'logline',{full:true,area:true,rows:4,required:true,placeholder:'What happens in your story?'})}${field('Genre',v.genre,'genre',{placeholder:'Action, drama, comedy…'})}${field('Tone',v.tone,'tone',{placeholder:'Hopeful, tense, playful…'})}${field('Setting',v.setting,'setting',{area:true,full:true,placeholder:'Where and when does it take place?'})}</div></section><section class="panel"><div class="panel-title"><h3>The look and creative choices</h3></div><div class="field-grid">${field('Visual style',v.visual_style,'visual_style',{full:true,area:true,rows:3,placeholder:'Cinematic realism, bold comic-book ink…'})}${field('Target duration in seconds',v.duration_seconds || 30,'duration_seconds',{type:'number',full:true,hint:'Target length for your completed movie.'})}${field('Themes',v.themes?.join('\n'),'themes',{area:true,full:true,hint:'One theme per line.'})}${field('Creative decisions to preserve',v.creative_decisions?.join('\n'),'creative_decisions',{area:true,full:true,hint:'One decision per line.'})}</div></section></div></form>
     ${v.open_questions?.length ? `<details class="panel" style="margin-top:22px"><summary>Suggestions still open to your direction (${v.open_questions.length})</summary>${v.open_questions.map(q=>`<div class="list-note">${esc(q)}</div>`).join('')}</details>` : ''}
-    <div class="row wrap" style="margin-top:22px">${button('Save brief','save-vision')}${button(S.source?.selected?.length?'Refresh from source':'Refresh from conversation','generate-vision','ghost',!S.configured.openai || (!S.messages.length&&!S.source?.selected?.length) ? 'disabled' : '')}</div>
+    <div class="row wrap" style="margin-top:22px">${button(S.source?.selected?.length?'Refresh from source':'Refresh from conversation','generate-vision','ghost',!S.configured.openai || (!S.messages.length&&!S.source?.selected?.length) ? 'disabled' : '')}</div>
     ${reviewFooter('Does this capture your idea?','Your approved brief becomes the starting point for the character sheets.',S.source?.selected?.length?'source':'idea','approve-vision','Approve & build characters')}`;
 }
 function imagePreview(url,name) {
@@ -145,20 +206,22 @@ function uploadButton(text, action, attrs='') {
 }
 function characterReferenceChoice(c) {
   const enabled=c.use_as_reference!==false;
-  return `<fieldset class="reference-choice"><legend>How should this image be used?</legend><label><input type="radio" name="character-reference-use" form="character-form" value="reference" ${enabled?'checked':''}><span><strong>Use as character reference</strong><small>Guide this character’s appearance without making the image the opening frame.</small></span></label><label><input type="radio" name="character-reference-use" form="character-form" value="save_only" ${!enabled?'checked':''}><span><strong>Save only</strong><small>Keep the image here without sending it to video generation.</small></span></label><p class="hint">Your choice carries into Render, where you can review it before generating. Character images are optional.</p></fieldset>`;
+  return `<fieldset class="reference-choice"><legend>How should this image be used?</legend><label><input type="radio" name="character-reference-use" form="character-form" value="reference" ${enabled?'checked':''}><span><strong>Use as character reference</strong><small>Guide this character’s appearance without making the image the opening frame.</small></span></label><label><input type="radio" name="character-reference-use" form="character-form" value="save_only" ${!enabled?'checked':''}><span><strong>Save only</strong><small>Keep the image here without sending it to video generation.</small></span></label><p class="hint">Your choice carries into Render. ${draftEdit?.stage==='characters'?'Save the character to apply this choice.':'Choose Edit character to change it.'}</p></fieldset>`;
 }
 function characters() {
-  if (!S.characters.length) {
+  const newCharacter = draftEdit?.stage === 'characters' && draftEdit.newCharacter;
+  if (!S.characters.length && !newCharacter) {
     return heading('03 / THE CAST','Meet your characters.','Develop your cast from the approved creative brief, whether you started with an idea or a source story.',badge(S.statuses.characters)) + noKey() +
       (S.statuses.vision !== 'approved' ? notice(`Approve your creative brief to draft character profiles. ${link('Review brief','brief','ghost small')}`) : '') +
       `<div class="empty-state"><div class="empty-symbol">♙</div><h2>Your cast starts with your idea.</h2><p>MIA uses your approved brief to draft each character’s appearance, personality, and visual reference.</p><div class="row wrap">${button('Draft your characters','generate-characters','primary',S.statuses.vision !== 'approved' || !S.configured.openai ? 'disabled' : '')}${button('Add a character myself','add-character','secondary')}</div></div>` +
       (S.statuses.vision==='approved' ? `<div class="review-footer"><div><h3>A movie without characters?</h3><p>You can continue with a scenery or abstract film.</p></div>${button('Continue without a cast','skip-characters','ghost')}</div>` : '');
   }
-  const c = S.characters.find(c=>c.id===currentCID) || S.characters[0];currentCID=c.id;
+  const c = newCharacter ? {id:'',name:'',images:[]} : (S.characters.find(c=>c.id===currentCID) || S.characters[0]);
+  if (!newCharacter) currentCID = c.id;
   const image = c.images?.find(v=>v.id===c.current_image);
-  return heading('03 / THE CAST','Give your characters a face.','Edit the details. Generate a sheet. Refine it until it matches your idea.',badge(S.statuses.characters)) + noKey() + stale('characters') +
+  return heading('03 / THE CAST','Give your characters a face.','Review the profile and choose Edit character to update it. Generate or upload a sheet when you’re ready.',badge(S.statuses.characters)) + noKey() + stale('characters') +
     `<div class="cast-bar">${S.characters.map(char=>`<button class="cast-tab ${char.id===c.id ? 'active' : ''}" data-action="select-character" data-id="${esc(char.id)}"><span class="initials">${esc(initials(char.name))}</span><span>${esc(char.name || 'Unnamed character')}<small>${esc(char.role || 'Character')}</small></span></button>`).join('')}${button('＋ Add character','add-character','ghost small')}<span class="spacer"></span>${button('Refresh profiles','generate-characters','ghost small',!S.configured.openai || S.statuses.vision!=='approved' ? 'disabled' : '')}</div>
-    <div class="cast-workspace"><section class="panel"><div class="panel-title"><div><div class="subtle-label">CHARACTER PROFILE</div><h2>${esc(c.name || 'New character')}</h2></div><span class="badge">${esc(c.id)}</span></div><form id="character-form" data-id="${esc(c.id)}"><div class="field-grid">${field('Name',c.name,'name',{required:true})}${field('Role in the story',c.role,'role',{placeholder:'Protagonist, rival…'})}${field('Age / life stage',c.age,'age',{full:true,placeholder:'Mid-20s, older adult…'})}${field('Appearance',c.appearance,'appearance',{area:true,rows:4,full:true,required:true,placeholder:'Face, hair, build, distinguishing details…'})}${field('Wardrobe',c.wardrobe,'wardrobe',{area:true,full:true,placeholder:'The outfit that should stay consistent.'})}${field('Personality',c.personality,'personality',{area:true,full:true})}</div><details class="details"><summary>Backstory & visual direction</summary><div class="field-grid">${field('Backstory',c.backstory,'backstory',{area:true,full:true})}${field('Identity details to preserve',c.identity_constraints,'identity_constraints',{area:true,full:true,placeholder:'Keep the face, hair, outfit, and proportions consistent.'})}${field('Additional sheet direction',c.reference_image_prompt,'reference_image_prompt',{area:true,rows:4,full:true,hint:'The sheet also uses all of the profile details above and the visual style from your brief.'})}</div></details></form><div class="row between" style="margin-top:20px">${button('Save character','save-character','secondary')}${button('Remove','delete-character','danger small',`data-id="${esc(c.id)}"`)}</div></section>
+    <div class="cast-workspace"><section class="panel"><div class="panel-title"><div><div class="subtle-label">CHARACTER PROFILE</div><h2>${esc(c.name || 'New character')}</h2></div>${draftControls('characters')}</div><form id="character-form" data-id="${esc(c.id)}"><div class="field-grid">${field('Name',c.name,'name',{required:true})}${field('Role in the story',c.role,'role',{placeholder:'Protagonist, rival…'})}${field('Age / life stage',c.age,'age',{full:true,placeholder:'Mid-20s, older adult…'})}${field('Appearance',c.appearance,'appearance',{area:true,rows:4,full:true,required:true,placeholder:'Face, hair, build, distinguishing details…'})}${field('Wardrobe',c.wardrobe,'wardrobe',{area:true,full:true,placeholder:'The outfit that should stay consistent.'})}${field('Personality',c.personality,'personality',{area:true,full:true})}</div><details class="details"><summary>Backstory & visual direction</summary><div class="field-grid">${field('Backstory',c.backstory,'backstory',{area:true,full:true})}${field('Identity details to preserve',c.identity_constraints,'identity_constraints',{area:true,full:true,placeholder:'Keep the face, hair, outfit, and proportions consistent.'})}${field('Additional sheet direction',c.reference_image_prompt,'reference_image_prompt',{area:true,rows:4,full:true,hint:'The sheet also uses all of the profile details above and the visual style from your brief.'})}</div></details></form><div class="row between" style="margin-top:20px">${newCharacter?'':button('Remove character','delete-character','danger small',`data-id="${esc(c.id)}"`)}</div></section>
     <section class="panel"><div class="panel-title"><div><div class="subtle-label">VISUAL REFERENCE</div><h3>Character sheet</h3></div>${image ? `<a class="button ghost small" href="${esc(c.image_url)}" download="${esc(c.name)}-sheet.png">Download</a>` : '<span class="badge">No image yet</span>'}</div>${imagePreview(c.image_url,c.name)}
     ${c.image_outdated ? notice('Your profile changed after this image was made. Edit the image or generate a new sheet to match the latest details.') : ''}
     <div class="image-actions">${button(c.image_url ? 'Generate new version' : 'Generate character sheet','generate-image','primary',!S.configured.openai ? 'disabled' : '')}${uploadButton('Upload a sheet','character-sheet')}</div>${adminInfo(`<p class="image-credit">Image model: ${esc(S.settings.image_model)} · ${esc(S.settings.image_quality)} quality · Uses your OpenAI API</p>`)}
@@ -169,16 +232,41 @@ function characters() {
     ${reviewFooter('Happy with your cast?','Images can be refined later. Your edited profiles carry into the script and shot plan.','brief','approve-characters','Approve & continue to script')}`;
 }
 function scriptPage() {
-  const script = S.script;
+  const script = draftEdit?.stage==='script' ? draftEdit.value : S.script;
   const header = heading('04 / THE STORY','Write the scene. Find the story.','MIA writes from your approved brief and edited cast. You can change every scene.',badge(S.statuses.script)) + noKey() + stale('script');
-  if (!script.scenes?.length) return header + `<div class="empty-state"><div class="empty-symbol">▤</div><h2>Your characters are ready for a story.</h2><p>Draft a connected sequence, then revise the action and dialogue in plain language.</p><div class="row wrap">${button('Draft screenplay','generate-script','primary',S.statuses.characters!=='approved' || !S.configured.openai ? 'disabled' : '')}${button('Write a scene myself','add-scene')}</div>${S.statuses.characters!=='approved' ? `<p class="hint">${link('Review and approve characters','characters','ghost small')}</p>` : ''}</div>`;
-  return header + `<section class="panel" style="margin-bottom:22px"><div class="panel-title"><h3>The screenplay</h3>${button('Generate a revised draft','generate-script','ghost small',!S.configured.openai || S.statuses.characters!=='approved' ? 'disabled' : '')}</div><div class="field-grid" id="script-meta">${field('Title',script.title,'title',{group:'script',full:true})}${field('Synopsis',script.synopsis,'synopsis',{group:'script',full:true,area:true})}${field('Notes for the next AI revision','','revision_notes',{group:'revision',full:true,area:true,rows:2,placeholder:'Make the dialogue more natural. Keep the ending, but shorten the opening.'})}</div></section><form id="script-form">${script.scenes.map((scene,i)=>`<details class="panel scene compact-editor" ${i===0?'open':''}><summary>Scene ${i+1} · ${esc(scene.title||'Untitled scene')}</summary><div class="scene-header"><span class="scene-number">SCENE ${String(i+1).padStart(2,'0')}</span><h3>${esc(scene.title || 'Untitled scene')}</h3>${button('Remove','remove-scene','ghost small',`data-index="${i}"`)}</div><div class="field-grid">${field('Scene title',scene.title,'title',{group:'scene',index:i,full:true})}${field('Location',scene.location,'location',{group:'scene',index:i})}${field('Time / lighting',scene.time,'time',{group:'scene',index:i})}${field('Purpose of this scene',scene.purpose,'purpose',{group:'scene',index:i,full:true,area:true,rows:2})}${field('Action',scene.action,'action',{group:'scene',index:i,full:true,area:true,rows:4})}</div>${Array.isArray(scene.source_refs)&&scene.source_refs.length?`<details class="details"><summary>Source links and adaptation choices</summary><p class="hint">Source: ${scene.source_refs.map(esc).join('; ')}</p><p class="hint">${Array.isArray(scene.adaptation_changes)?scene.adaptation_changes.map(esc).join('; '):''}</p></details>`:''}<div class="dialogue-label">Dialogue</div>${(scene.dialogue || []).map((line,j)=>`<div class="dialogue-row"><label class="sr-only" for="speaker-${i}-${j}">Speaker</label><input id="speaker-${i}-${j}" data-dialogue="speaker" data-scene="${i}" data-line="${j}" value="${esc(line.speaker)}" placeholder="Speaker"><label class="sr-only" for="line-${i}-${j}">Dialogue line</label><textarea id="line-${i}-${j}" data-dialogue="line" data-scene="${i}" data-line="${j}" rows="1" placeholder="What they say…">${esc(line.line)}</textarea><button type="button" class="icon-button" data-action="remove-dialogue" data-index="${i}" data-line="${j}" aria-label="Remove dialogue line">×</button></div>`).join('')}${button('＋ Add dialogue','add-dialogue','ghost small',`data-index="${i}"`)}</details>`).join('')}</form><div class="row wrap">${button('＋ Add scene','add-scene','ghost')}${button('Save screenplay','save-script','secondary')}</div>${reviewFooter('Does the story feel right?','Review the action and dialogue before turning each scene into shots.','characters','approve-script','Approve & continue to shots')}`;
+  if (!script.scenes?.length && draftEdit?.stage!=='script') return header + `<div class="empty-state"><div class="empty-symbol">▤</div><h2>Your characters are ready for a story.</h2><p>Draft a connected sequence, then revise the action and dialogue in plain language.</p><div class="row wrap">${button('Draft screenplay','generate-script','primary',S.statuses.characters!=='approved' || !S.configured.openai ? 'disabled' : '')}${button('Write a scene myself','add-scene')}</div>${S.statuses.characters!=='approved' ? `<p class="hint">${link('Review and approve characters','characters','ghost small')}</p>` : ''}</div>`;
+  return header + `<section class="panel" style="margin-bottom:22px"><div class="panel-title"><h3>The screenplay</h3>${draftControls('script')}</div><div class="field-grid" id="script-meta">${field('Title',script.title,'title',{group:'script',full:true})}${field('Synopsis',script.synopsis,'synopsis',{group:'script',full:true,area:true})}${field('Notes for the next AI revision','','revision_notes',{group:'revision',full:true,area:true,rows:2,placeholder:'Make the dialogue more natural. Keep the ending, but shorten the opening.'})}</div><div class="row wrap">${button('Generate a revised draft','generate-script','ghost small',!S.configured.openai || S.statuses.characters!=='approved' ? 'disabled' : '')}</div></section><form id="script-form">${(script.scenes || []).map((scene,i)=>`<details class="panel scene compact-editor" ${i===0?'open':''}><summary>Scene ${i+1} · ${esc(scene.title||'Untitled scene')}</summary><div class="scene-header"><span class="scene-number">SCENE ${String(i+1).padStart(2,'0')}</span><h3>${esc(scene.title || 'Untitled scene')}</h3>${button('Remove','remove-scene','ghost small',`data-draft-operation="script" data-index="${i}"`)}</div><div class="field-grid">${field('Scene title',scene.title,'title',{group:'scene',index:i,full:true})}${field('Location',scene.location,'location',{group:'scene',index:i})}${field('Time / lighting',scene.time,'time',{group:'scene',index:i})}${field('Purpose of this scene',scene.purpose,'purpose',{group:'scene',index:i,full:true,area:true,rows:2})}${field('Action',scene.action,'action',{group:'scene',index:i,full:true,area:true,rows:4})}</div>${Array.isArray(scene.source_refs)&&scene.source_refs.length?`<details class="details"><summary>Source links and adaptation choices</summary><p class="hint">Source: ${scene.source_refs.map(esc).join('; ')}</p><p class="hint">${Array.isArray(scene.adaptation_changes)?scene.adaptation_changes.map(esc).join('; '):''}</p></details>`:''}<div class="dialogue-label">Dialogue</div>${(scene.dialogue || []).map((line,j)=>`<div class="dialogue-row"><label class="sr-only" for="speaker-${i}-${j}">Speaker</label><input id="speaker-${i}-${j}" data-dialogue="speaker" data-scene="${i}" data-line="${j}" value="${esc(line.speaker)}" placeholder="Speaker"><label class="sr-only" for="line-${i}-${j}">Dialogue line</label><textarea id="line-${i}-${j}" data-dialogue="line" data-scene="${i}" data-line="${j}" rows="1" placeholder="What they say…">${esc(line.line)}</textarea><button type="button" class="icon-button" data-action="remove-dialogue" data-draft-operation="script" data-index="${i}" data-line="${j}" aria-label="Remove dialogue line">×</button></div>`).join('')}${button('＋ Add dialogue','add-dialogue','ghost small',`data-draft-operation="script" data-index="${i}"`)}</details>`).join('')}</form><div class="row wrap">${button('＋ Add scene','add-scene','ghost','data-draft-operation="script"')}</div>${reviewFooter('Does the story feel right?','Review the action and dialogue before turning each scene into shots.','characters','approve-script','Approve & continue to shots')}`;
+}
+function shotModelPanel() {
+  const current = S.settings.video_provider==='alibaba' ? 'alibaba' : 'runway:'+S.settings.runway_model;
+  const durations = S.limits.durations;
+  const supported = durations.length === S.limits.max_duration - S.limits.min_duration + 1
+    ? (durations.length===1 ? durations[0] : S.limits.min_duration+'–'+S.limits.max_duration)
+    : durations.join(', ');
+  return `<section class="panel shot-planning-model">
+    <div class="panel-title"><h3>Video model for this plan</h3>${draftControls('shot-model')}</div>
+    <label class="field"><span>Model</span><select id="shot-planning-model">
+      <option value="alibaba" ${current==='alibaba'?'selected':''}>Alibaba Wan 3.0</option>
+      <optgroup label="Runway models">${S.providers.runway_models.map(model=>`<option value="runway:${esc(model.id)}" ${current==='runway:'+model.id?'selected':''}>${esc(model.name)}</option>`).join('')}</optgroup>
+    </select></label>
+    <p class="hint">Supported clip lengths for the saved model are ${supported} seconds. MIA uses the action, dialogue and pauses in your script to choose each length.</p>
+  </section>`;
+}
+function shotDurationField(shot,index) {
+  const seconds = Number(shot.duration_seconds);
+  const supported = S.limits.durations;
+  const choices = supported.includes(seconds) ? supported : [seconds,...supported];
+  return `<label class="field"><span>Clip duration in seconds</span>
+    <select data-field="duration_seconds" data-group="shot" data-index="${index}">
+      ${choices.map(length=>`<option value="${length}" ${length===seconds?'selected':''}>${length} seconds${supported.includes(length)?'':' · previous plan'}</option>`).join('')}
+    </select>${shot.duration_reason?`<span class="hint">Timing: ${esc(shot.duration_reason)}</span>`:''}
+  </label>`;
 }
 function shotsPage() {
-  const shots = S.director.shots || [];
-  const header = heading('05 / THE DIRECTION','Plan the moments that matter.','Keep connected action in longer takes, with cuts where the story needs them.',badge(S.statuses.director)) + noKey() + stale('director');
-  if (!shots.length) return header + `<div class="empty-state"><div class="empty-symbol">▣</div><h2>Turn your scenes into shots.</h2><p>MIA plans continuous takes using your chosen model’s duration limit. Review the action and necessary cuts before generating.</p><div class="row wrap">${button('Create shot plan','generate-director','primary',S.statuses.script!=='approved' || !S.configured.openai ? 'disabled' : '')}${button('Add a shot myself','add-shot')}</div>${S.statuses.script!=='approved' ? `<p class="hint">${link('Review and approve script','script','ghost small')}</p>` : ''}</div>`;
-  return header + `<section class="panel" style="margin-bottom:22px"><div class="row between"><div><h3>${shots.length} shots to bring your story to life</h3><p class="hint">Plan the action, camera movement and continuity for each shot.</p></div>${button('Revise shot plan','generate-director','ghost small',!S.configured.openai || S.statuses.script!=='approved' ? 'disabled' : '')}</div><div style="margin-top:16px">${field('Notes for the next AI revision','','revision_notes',{group:'revision',area:true,rows:2,placeholder:'Use a side view for the punch and dodge. Keep both characters visible.'})}</div></section><form id="shots-form"><div class="shot-grid">${shots.map((shot,i)=>`<details class="panel shot-card compact-editor" ${i===0?'open':''}><summary>Clip ${i+1} · ${shot.duration_seconds}s · ${esc(shot.shot_type||'Continuous take')}</summary><div class="scene-header"><span class="scene-number">SHOT ${String(i+1).padStart(2,'0')}</span><h3>${esc(shot.shot_type || 'New shot')}</h3>${button('Remove','remove-shot','ghost small',`data-index="${i}"`)}</div><div class="field-grid">${field('Shot type',shot.shot_type,'shot_type',{group:'shot',index:i})}${field('Clip duration in seconds',shot.duration_seconds,'duration_seconds',{group:'shot',index:i,type:'number',min:S.limits.min_duration,max:S.limits.max_duration,step:1,hint:'Selected model supports up to '+S.limits.max_duration+' seconds per clip.'})}${field('Scene',shot.scene_id,'scene_id',{group:'shot',index:i})}${field('Characters',shot.characters?.join(', '),'characters',{group:'shot',index:i,placeholder:'Names, separated by commas'})}${field('Camera',shot.camera,'camera',{group:'shot',index:i,area:true,full:true,rows:2})}${field('On-screen action',shot.on_screen_action,'on_screen_action',{group:'shot',index:i,area:true,full:true,rows:3})}${field('Continuity',shot.continuity,'continuity',{group:'shot',index:i,area:true,full:true,rows:2})}${field('Reason for starting a new clip',shot.cut_reason,'cut_reason',{group:'shot',index:i,full:true,area:true,rows:2,placeholder:'Duration limit, a new camera angle, or a real scene change.'})}${field('Sound direction',shot.sound,'sound',{group:'shot',index:i,full:true})}${field('Extra prompt direction',shot.prompt,'prompt',{group:'shot',index:i,area:true,full:true,rows:2})}</div></details>`).join('')}</div></form><div class="row wrap" style="margin-top:22px">${button('＋ Add shot','add-shot','ghost')}${button('Save shot plan','save-director','secondary')}</div>${reviewFooter('Ready to bring a shot to life?','Approve the plan, then choose a shot and review the final video prompt.','script','approve-director','Approve & continue to render')}`;
+  const shots = (draftEdit?.stage==='director' ? draftEdit.value : S.director).shots || [];
+  const header = heading('05 / THE DIRECTION','Plan the moments that matter.','Give each shot the time its action and dialogue need.',badge(S.statuses.director)) + noKey() + stale('director') + shotModelPanel();
+  if (!shots.length && draftEdit?.stage!=='director') return header + `<div class="empty-state"><div class="empty-symbol">▣</div><h2>Turn your scenes into shots.</h2><p>MIA times each shot from the screenplay using the model above. Review the plan before generating a video.</p><div class="row wrap">${button('Create shot plan','generate-director','primary',S.statuses.script!=='approved' || !S.configured.openai ? 'disabled' : '')}${button('Add a shot myself','add-shot')}</div>${S.statuses.script!=='approved' ? `<p class="hint">${link('Review and approve script','script','ghost small')}</p>` : ''}</div>`;
+  return header + `<section class="panel" style="margin-bottom:22px"><div class="row between"><div><h3>${shots.length} shots to bring your story to life</h3><p class="hint">Plan the action, camera movement and continuity for each shot.</p></div>${draftControls('director')}</div><div style="margin-top:16px">${field('Notes for the next AI revision','','revision_notes',{group:'revision',area:true,rows:2,placeholder:'Use a quick insert of the key, then hold on the conversation.'})}</div><div class="row wrap">${button('Revise shot plan','generate-director','ghost small',!S.configured.openai || S.statuses.script!=='approved' ? 'disabled' : '')}</div></section><form id="shots-form"><div class="shot-grid">${shots.map((shot,i)=>`<details class="panel shot-card compact-editor" ${i===0?'open':''}><summary>Clip ${i+1} · ${shot.duration_seconds}s · ${esc(shot.shot_type||'Continuous take')}</summary><div class="scene-header"><span class="scene-number">SHOT ${String(i+1).padStart(2,'0')}</span><h3>${esc(shot.shot_type || 'New shot')}</h3>${button('Remove','remove-shot','ghost small',`data-draft-operation="director" data-index="${i}"`)}</div><div class="field-grid">${field('Shot type',shot.shot_type,'shot_type',{group:'shot',index:i})}${shotDurationField(shot,i)}${field('Scene',shot.scene_id,'scene_id',{group:'shot',index:i})}${field('Characters',shot.characters?.join(', '),'characters',{group:'shot',index:i,placeholder:'Names, separated by commas'})}${field('Camera',shot.camera,'camera',{group:'shot',index:i,area:true,full:true,rows:2})}${field('On-screen action',shot.on_screen_action,'on_screen_action',{group:'shot',index:i,area:true,full:true,rows:3})}${field('Continuity',shot.continuity,'continuity',{group:'shot',index:i,area:true,full:true,rows:2})}${field('Reason for starting a new clip',shot.cut_reason,'cut_reason',{group:'shot',index:i,full:true,area:true,rows:2,placeholder:'Duration limit, a new camera angle, or a real scene change.'})}${field('Sound direction',shot.sound,'sound',{group:'shot',index:i,full:true})}${field('Extra prompt direction',shot.prompt,'prompt',{group:'shot',index:i,area:true,full:true,rows:2})}</div></details>`).join('')}</div></form><div class="row wrap" style="margin-top:22px">${button('＋ Add shot','add-shot','ghost','data-draft-operation="director"')}</div>${reviewFooter('Ready to bring a shot to life?','Approve the plan, then choose a shot and review the final video prompt.','script','approve-director','Approve & continue to render')}`;
 }
 function continuationPanel() {
   const c=S.continuation;
@@ -248,11 +336,15 @@ function activityPage() {
 }
 function render() {
   if (!S) return;
+  const notes = page===document.body.dataset.studioPage ? $('[data-group="revision"]')?.value : null;
   renderShell();
   const views={overview,source:sourcePage,share:sharePage,idea,brief,characters,script:scriptPage,shots:shotsPage,render:renderPage,library:libraryPage,assembly:assemblyPage,settings:settingsPage,activity:activityPage};
   $('#main').innerHTML=(views[page] || overview)();
+  const revisionField = $('[data-group="revision"]');
+  if (revisionField && notes != null) revisionField.value = notes;
+  applyDraftLocks();
   if((S.tasks||[]).some(t=>t.kind==='operation'&&['queued','running'].includes(t.status))){
-    $$('#main input, #main textarea, #main select, #main button').forEach(e=>{if(e.id!=='platform-project'&&e.dataset.action!=='source-read')e.disabled=true;});
+    $$('#main input, #main textarea, #main select, #main button').forEach(e=>{if(e.id!=='platform-project'&&!['source-read','cancel-draft'].includes(e.dataset.action))e.disabled=true;});
   }
   if(bookAnalysisRunning)$$('#main input, #main textarea, #main select, #main button').forEach(e=>{if(e.dataset.action!=='source-stop')e.disabled=true;});
   if (page==='idea') {const thread=$('#chat-thread');thread.scrollTop=thread.scrollHeight;AIMVoice.update();}
@@ -268,22 +360,67 @@ function collectBrief() {
   return updated;
 }
 function collectScript() {
-  const script=clone(S.script);script.scenes ||= [];
+  const script=clone(draftEdit.value);script.scenes ||= [];
   $$('[data-group="script"]').forEach(e=>script[e.dataset.field]=e.value);
   $$('[data-group="scene"]').forEach(e=>script.scenes[Number(e.dataset.index)][e.dataset.field]=e.value);
   $$('[data-dialogue]').forEach(e=>script.scenes[Number(e.dataset.scene)].dialogue[Number(e.dataset.line)][e.dataset.dialogue]=e.value);
   return script;
 }
 function collectShots() {
-  const director=clone(S.director);director.shots ||= [];
+  const director=clone(draftEdit.value);director.shots ||= [];
   $$('[data-group="shot"]').forEach(e=>{
     let v=e.value;if(e.dataset.field==='duration_seconds') v=Number(v);
     if(e.dataset.field==='characters') v=v.split(',').map(s=>s.trim()).filter(Boolean);
-    director.shots[Number(e.dataset.index)][e.dataset.field]=v;
+    const shot=director.shots[Number(e.dataset.index)],field=e.dataset.field;
+    if (['duration_seconds','on_screen_action'].includes(field) && shot[field]!==v) delete shot.duration_reason;
+    shot[field]=v;
   });return director;
 }
-async function saveCharacter() {
-  if ($('#character-form')) {const values=collectFields($('#character-form')),choice=$('[name="character-reference-use"]:checked');if(choice?.name==='character-reference-use')values.use_as_reference=choice.value==='reference';await api('characters/'+currentCID,values); }
+async function saveDraft(stage) {
+  if (draftEdit?.stage !== stage) return;
+  if (!draftEdit.newCharacter && !draftEdit.structureChanged &&
+      draftFieldValues(stage).every((value,index)=>value===draftEdit.initial[index])) {
+    closeDraft(stage);
+    return;
+  }
+  const editor=draftEditors[stage],invalid=$$(editor.fields).find(field=>!field.checkValidity());
+  if (invalid) {
+    const details=invalid.closest('details');if(details)details.open=true;
+    invalid.reportValidity();
+    return;
+  }
+  const saved = await run('Saving your '+editor.label+'…',async()=>{
+    if (stage==='characters') {
+      const values=collectFields($('#character-form'));
+      values.use_as_reference=$('[name="character-reference-use"]:checked').value==='reference';
+      if (draftEdit.newCharacter) {
+        await api('characters',values);
+        currentCID=S.characters.at(-1).id;
+      } else await api('characters/'+currentCID,values);
+    } else if (stage==='shot-model') {
+      const model=$('#shot-planning-model').value;
+      const settings=model==='alibaba' ? {video_provider:'alibaba'} : {video_provider:'runway',runway_model:model.slice(7)};
+      await api('settings',settings);
+    } else if (stage==='render') {
+      await api('render/save',renderOptions());
+      renderReviewErrors=[];
+    } else {
+      const collect={vision:collectBrief,script:collectScript,director:collectShots}[stage];
+      await api('save/'+stage,collect());
+    }
+    draftEdit=null;
+  },{message:'Changes saved.'});
+  if(saved)focusDraftControl(stage);
+}
+function changeDraftStructure(stage, change) {
+  if (!draftEdit) startDraft(stage);
+  if (draftEdit?.stage !== stage) return;
+  const draft=stage==='script' ? collectScript() : collectShots();
+  change(draft);
+  draftEdit.value=draft;
+  draftEdit.structureChanged=true;
+  setDirty(true);
+  render();
 }
 function sequenceOptions() {
   return {name:$('[data-field="sequence_name"]').value.trim() || 'Untitled scene',clip_ids:[...S.sequence.clip_ids]};
@@ -302,27 +439,18 @@ async function confirmAction(title,copy,label='Continue',inputOptions=null) {
 }
 async function generate(stage) {
   const dest={vision:'brief',characters:'characters',script:'script',director:'shots'}[stage];
-  const notes=$('[data-group="revision"]')?.value || '';
+  const revision=$('[data-group="revision"]');
   if(page==='idea' && $('#chat-message')?.value.trim()) return toast('Send your latest message first so the brief includes it.',true);
   await run('MIA is creating your '+({vision:'creative brief',characters:'character profiles',script:'screenplay',director:'shot plan'}[stage])+'…',async()=>{
-    if (dirty) {
-      if(page==='brief') await api('save/vision',collectBrief());
-      if(page==='characters') await saveCharacter();
-      if(page==='script' && S.script.scenes?.length) await api('save/script',collectScript());
-      if(page==='shots' && S.director.shots?.length) await api('save/director',collectShots());
-    }
-    await api('generate/'+stage,{instructions:notes});
+    await api('generate/'+stage,{instructions:revision?.value || ''});
+    if (revision) revision.value='';
   },{dest,copy:'MIA is using '+S.settings.model+'. Review the draft before continuing.'});
 }
 async function approveStep(stage) {
   const dest={vision:'characters',characters:'script',script:'shots',director:'render'}[stage];
   await run('Saving your creative choices…',async()=>{
-    if(stage==='vision') await api('save/vision',collectBrief());
-    if(stage==='characters') await saveCharacter();
-    if(stage==='script') await api('save/script',collectScript());
-    if(stage==='director') await api('save/director',collectShots());
     await api('approve/'+stage,{});
-    if(stage==='vision' && !S.characters.length && S.configured.openai) await api('generate/characters',{});
+    if(stage==='vision' && !S.characters.length && S.configured.openai && S.platform.paid_enabled) await api('generate/characters',{});
     if(stage==='director' && S.director.shots?.length && !S.render_prompt) await api('render/compile',{shot_id:S.director.shots[0].id});
   },{dest,message:'Creative choices saved.'});
 }
@@ -331,6 +459,7 @@ async function handleAction(action,el) {
   if(action==='source-stop')return platformAction(action,el);
   if(busy || bookAnalysisRunning) return;
   if(AIMVoice.active() && !action.startsWith('voice-') && !['clear-conversation','clear-composer'].includes(action))return toast('Stop your voice conversation before changing the project.',true);
+  if (draftEdit && !['save-draft','cancel-draft'].includes(action) && el.dataset.draftOperation!==draftEdit.stage) return;
   if(await renderReviewAction(action,el))return;
   if(await creationAction(action,el))return;
   if(await platformAction(action,el))return;
@@ -351,18 +480,15 @@ async function handleAction(action,el) {
     case 'voice-cancel':return AIMVoice.cancel();
     case 'voice-read-last':return AIMVoice.speakLast();
     case 'voice-stop-reading':return AIMVoice.stopPlayback();
-    case 'save-vision': return run('Saving your brief…',()=>api('save/vision',collectBrief()),{message:'Brief saved.'});
-    case 'save-script': return run('Saving your screenplay…',()=>api('save/script',collectScript()),{message:'Screenplay saved.'});
-    case 'save-director': return run('Saving your shot plan…',()=>api('save/director',collectShots()),{message:'Shot plan saved.'});
-    case 'save-character': return run('Saving your character…',saveCharacter,{message:'Character saved.'});
+    case 'edit-draft': return startDraft(el.dataset.stage);
+    case 'save-draft': return saveDraft(el.dataset.stage);
+    case 'cancel-draft':
+      if (draftEdit?.stage===el.dataset.stage) closeDraft(el.dataset.stage);
+      return;
     case 'select-character':
       if(dirty && !window.confirm('You have unsaved edits. Switch characters without saving them?')) return;
       currentCID=el.dataset.id;setDirty(false);render();return;
-    case 'add-character':
-      return run('Adding a character…',async()=>{
-        if(page==='characters' && dirty) await saveCharacter();
-        await api('characters',{name:'New character',role:'',appearance:''});currentCID=S.characters.at(-1).id;
-      },{dest:'characters'});
+    case 'add-character': return startDraft('characters',true);
     case 'delete-character':
       if(await confirmAction('Remove this character?','The character will leave this movie’s cast. Existing image files and archived projects will remain available.','Remove character')) return run('Updating the cast…',()=>api('characters/'+el.dataset.id+'/delete',{}),{message:'Character removed.'});return;
     case 'skip-characters':
@@ -370,21 +496,21 @@ async function handleAction(action,el) {
     case 'generate-image':case 'edit-image': {
       const instructions=$('#image-correction')?.value || '';
       if(action==='edit-image' && !instructions.trim()) return toast('Describe what you want to change in the image.',true);
-      return run(action==='edit-image' ? 'Refining the character sheet…' : 'Generating the character sheet…',async()=>{
-        await saveCharacter();await api('characters/'+currentCID+'/image',{mode:action==='edit-image' ? 'edit' : 'generate',instructions});
-      },{copy:'This uses '+S.settings.image_model+'. Image generation can take a few minutes.',message:'New image version saved.'});
+      return run(action==='edit-image' ? 'Refining the character sheet…' : 'Generating the character sheet…',
+        ()=>api('characters/'+currentCID+'/image',{mode:action==='edit-image' ? 'edit' : 'generate',instructions}),
+        {copy:'This uses '+S.settings.image_model+'. Image generation can take a few minutes.',message:'New image version saved.'});
     }
-    case 'select-image': return run('Selecting an image version…',async()=>{if(dirty) await saveCharacter();await api('characters/'+currentCID+'/select-image',{image_id:el.dataset.id});});
-    case 'assign-ref': return run('Selecting the video reference…',async()=>{if(dirty) await saveCharacter();await api('references/'+el.dataset.slot,{character_id:currentCID});},{message:'Video reference selected.'});
+    case 'select-image': return run('Selecting an image version…',()=>api('characters/'+currentCID+'/select-image',{image_id:el.dataset.id}));
+    case 'assign-ref': return run('Selecting the video reference…',()=>api('references/'+el.dataset.slot,{character_id:currentCID}),{message:'Video reference selected.'});
     case 'ensemble-ref': return run('Selecting the cast reference…',()=>api('references/'+el.dataset.slot,{kind:'ensemble'}),{message:'Cast sheet selected.'});
-    case 'select-ensemble-image': return run('Selecting a cast-sheet version…',async()=>{if(dirty) await saveCharacter();await api('ensemble/select-image',{image_id:el.dataset.id});});
+    case 'select-ensemble-image': return run('Selecting a cast-sheet version…',()=>api('ensemble/select-image',{image_id:el.dataset.id}));
     case 'edit-ensemble': {
       const instructions=$('[data-field="ensemble_correction"]').value.trim();
       if(!instructions) return toast('Describe the cast-sheet correction first.',true);
-      return run('Refining the cast sheet…',async()=>{if(dirty) await saveCharacter();await api('ensemble',{mode:'edit',instructions});},{copy:'Editing the current cast sheet. This may take a few minutes.',message:'New cast-sheet version saved.'});
+      return run('Refining the cast sheet…',()=>api('ensemble',{mode:'edit',instructions}),{copy:'Editing the current cast sheet. This may take a few minutes.',message:'New cast-sheet version saved.'});
     }
     case 'clear-ref': return run('Clearing the reference…',()=>api('references/'+el.dataset.slot,{clear:true}));
-    case 'ensemble': return run('Building the combined cast sheet…',async()=>{if(dirty) await saveCharacter();await api('ensemble',{});},{copy:'Your edited cast and selected images guide this sheet. It may take a few minutes.',message:'Combined cast sheet saved.'});
+    case 'ensemble': return run('Building the combined cast sheet…',()=>api('ensemble',{}),{copy:'Your edited cast and selected images guide this sheet. It may take a few minutes.',message:'Combined cast sheet saved.'});
     case 'retry-chat': {
       await sendConversation('',true);return;
     }
@@ -392,22 +518,31 @@ async function handleAction(action,el) {
       const examples=['Two rivals face off on a rainy neon street. One charges forward while the other dodges at the last second.','A student finds out their ordinary neighbor is secretly protecting the city.'];
       $('#chat-message').value=examples[Number(el.dataset.index)];$('#chat-message').focus();setDirty(true);return;
     }
-    case 'add-scene': {
-      S.script=collectScript();S.script.title ||= S.vision.title || 'Untitled movie';S.script.scenes ||= [];
-      S.script.scenes.push({id:'S'+Date.now(),title:'New scene',location:'',time:'',purpose:'',action:'',dialogue:[]});render();setDirty(true);return;
-    }
-    case 'remove-scene':S.script=collectScript();S.script.scenes.splice(Number(el.dataset.index),1);render();setDirty(true);return;
-    case 'add-dialogue':S.script=collectScript();S.script.scenes[Number(el.dataset.index)].dialogue ||= [];S.script.scenes[Number(el.dataset.index)].dialogue.push({speaker:'',line:''});render();setDirty(true);return;
-    case 'remove-dialogue':S.script=collectScript();S.script.scenes[Number(el.dataset.index)].dialogue.splice(Number(el.dataset.line),1);render();setDirty(true);return;
-    case 'add-shot': {
-      S.director=collectShots();S.director.shots ||= [];
-      S.director.shots.push({id:'SH'+Date.now(),scene_id:S.script.scenes?.[0]?.id || 'S1',duration_seconds:Math.min(15,S.limits.max_duration),shot_type:'New shot',camera:'',on_screen_action:'',characters:[],sound:'',continuity:'',prompt:''});render();setDirty(true);return;
-    }
-    case 'remove-shot':S.director=collectShots();S.director.shots.splice(Number(el.dataset.index),1);render();setDirty(true);return;
+    case 'add-scene': return changeDraftStructure('script',draft=>{
+      draft.title ||= S.vision.title || 'Untitled movie';
+      draft.scenes.push({id:'S'+Date.now(),title:'New scene',location:'',time:'',purpose:'',action:'',dialogue:[]});
+    });
+    case 'remove-scene': return changeDraftStructure('script',draft=>{
+      draft.scenes.splice(Number(el.dataset.index),1);
+    });
+    case 'add-dialogue': return changeDraftStructure('script',draft=>{
+      const scene=draft.scenes[Number(el.dataset.index)];
+      scene.dialogue ||= [];
+      scene.dialogue.push({speaker:'',line:''});
+    });
+    case 'remove-dialogue': return changeDraftStructure('script',draft=>{
+      draft.scenes[Number(el.dataset.index)].dialogue.splice(Number(el.dataset.line),1);
+    });
+    case 'add-shot': return changeDraftStructure('director',draft=>{
+      draft.shots.push({id:'SH'+Date.now(),scene_id:S.script.scenes?.[0]?.id || 'S1',duration_seconds:fitVideoDuration(5),
+        shot_type:'New shot',camera:'',on_screen_action:'',characters:[],sound:'',continuity:'',prompt:''});
+    });
+    case 'remove-shot': return changeDraftStructure('director',draft=>{
+      draft.shots.splice(Number(el.dataset.index),1);
+    });
     case 'compile-shot':
-      if(dirty && $('[data-field="render_prompt"]').value.trim() && !await confirmAction('Replace these video instructions?','This rebuilds the instructions from the selected scene and character references. Cancel to keep your current edits.','Update instructions')) return;
-      return run('Building the video instructions…',async()=>{await api('render/compile',{shot_id:$('#render-shot').value});renderInstructionsDirty=renderInstructionsOpen=false;renderReviewErrors=[];},{message:'Scene ready to review.'});
-    case 'save-render':return run('Saving the video prompt…',()=>api('render/save',renderOptions()),{message:'Prompt saved.'});
+      if(S.render_prompt_custom && !await confirmAction('Replace these video instructions?','The selected scene and its references will become the new video instructions.','Update instructions')) return;
+      return run('Building the video instructions…',async()=>{await api('render/compile',{shot_id:$('#render-shot').value});renderReviewErrors=[];},{message:'Scene ready to review.'});
     case 'use-text-only':return changeVideoOption({dataset:{videoOption:S.settings.video_provider==='alibaba'?'wan_mode':'runway_mode'},value:'text',type:'select-one'});
     case 'use-image-references':return changeVideoOption({dataset:{videoOption:S.settings.video_provider==='alibaba'?'wan_mode':'runway_mode'},value:'reference',type:'select-one'});
     case 'choose-text-model':return changeVideoModel('gen4.5','text');
@@ -418,13 +553,13 @@ async function handleAction(action,el) {
       renderPreflightBusy=true;updateRenderReview();
       try {
       const workspace=S.workspace_id,options=renderOptions();const r=await AIMTasks.request('render/preflight',{method:'POST',headers:{'Content-Type':'application/json','X-AIM-Token':token,'X-Workspace-ID':workspace},body:JSON.stringify(options)},workspace);
-      if(page!=='render'||S.workspace_id!==workspace)return;
+      if(page!=='render'||S.workspace_id!==workspace||draftEdit)return;
       if(JSON.stringify(renderOptions())!==JSON.stringify(options))return toast('Your video settings changed. Review them and choose Generate video again.');
       const checks=await r.json();if(!r.ok)throw new Error(checks.error||'The preflight check failed.');
-      if(checks.errors.length){renderReviewErrors=checks.errors;await api('state');S.render_prompt=options.prompt;S.render_duration=options.duration;render();reviewReveal('review-submit-errors');return;}
+      if(checks.errors.length){renderReviewErrors=checks.errors;await api('state');render();reviewReveal('review-submit-errors');return;}
       const quote=checks.estimate?.estimated_cost_usd;const copy=[quote!=null?'Estimated cost: $'+Number(quote).toFixed(2)+'. Final billing may differ.':'The final cost will be billed by the video provider.',reviewMode()==='first_frame'?'Your video will begin with the opening image you confirmed.':'Your video will use the scene and image-use settings shown on the review page.',...(checks.warnings||[]),'Generate this video now?'].filter(Boolean).join('\n\n');
       if(!await confirmAction('Generate this video?',copy,'Generate video'))return;
-      if(page!=='render'||S.workspace_id!==workspace||JSON.stringify(renderOptions())!==JSON.stringify(options))return toast('Your project or video settings changed. Review the video before generating.');
+      if(page!=='render'||S.workspace_id!==workspace||draftEdit||JSON.stringify(renderOptions())!==JSON.stringify(options))return toast('Your project or video settings changed. Review the video before generating.');
       return await run('Submitting your clip…',()=>api('render/submit',options),{dest:'library',message:'Render submitted.'});
       }finally{renderPreflightBusy=false;updateRenderReview();}
     }
@@ -500,7 +635,7 @@ document.addEventListener('change',async event=>{
   if(input.id==='studio-sort') {studioDisplay.sort=['recent','oldest','title'].includes(input.value)?input.value:'recent';render();$('#studio-sort').focus();return;}
   if(input.name==='source'&&input.closest('#share-form')){changeReviewSource(input);return;}
   if(input.id==='platform-project'){if(dirty&&!window.confirm('Switch projects and discard unsaved edits?'))return;await AIMVoice.stop();await portalRequest('platform/projects/select',{id:input.value});location.href='/overview';return;}
-  if(input.name==='character-reference-use'){await run('Saving image choice…',saveCharacter);return;}
+  if(draftEdit)return;
   if(input.hasAttribute('data-runway-quality')){await changeRunwayQuality(input);return;}
   if(input.dataset.videoOption){await changeVideoOption(input);return;}
   if(input.id==='voice-read-replies'){
@@ -518,11 +653,9 @@ document.addEventListener('change',async event=>{
   const upload=input.dataset.upload;
   const data=new FormData();data.append('file',input.files[0]);
   data.append('kind',upload==='character-photo' ? 'photo' : 'sheet');
-  await run('Saving the image…',async()=>{
-    if(page==='characters' && dirty) await saveCharacter();
-    if(page==='render' && dirty) await api('render/save',renderOptions());
-    await api(upload==='reference' ? 'references/'+input.dataset.slot+'/upload' : 'characters/'+currentCID+'/upload',data);
-  },{message:'Image uploaded and saved.'});
+  await run('Saving the image…',
+    ()=>api(upload==='reference' ? 'references/'+input.dataset.slot+'/upload' : 'characters/'+currentCID+'/upload',data),
+    {message:'Image uploaded and saved.'});
 });
 document.addEventListener('submit',async event=>{
   if(event.target.closest('dialog')) return;
@@ -558,18 +691,18 @@ window.addEventListener('popstate',async()=>{
     try { await api(next==='overview'?'platform/dashboard':'state'); }
     catch(error) { history.replaceState({},'','/'+page);toast(error.message,true);return; }
   }
-  page=next;setDirty(false);render();
+  page=next;draftEdit=null;setDirty(false);render();
 });
 window.addEventListener('beforeunload',event=>{if(dirty || busy || bookAnalysisRunning || AIMVoice.active()){event.preventDefault();event.returnValue='';}});
 document.addEventListener('aim:tasks',async event=>{
  if(!S)return;
  const local=event.detail.items.filter(t=>t.project_id===S.platform.project_id);const old=JSON.stringify((S.tasks||[]).map(t=>[t.id,t.status,t.progress]));
  S.tasks=local;AIMTasks.showBar(local);
- if(!event.detail.initial&&old!==JSON.stringify(local.map(t=>[t.id,t.status,t.progress]))&&!busy&&!dirty&&!AIMVoice.active()){
-  try{await api(page==='overview'?'platform/dashboard':'state');render();}catch{}
+ if(!event.detail.initial&&old!==JSON.stringify(local.map(t=>[t.id,t.status,t.progress]))&&!busy&&!dirty&&!draftEdit&&!AIMVoice.active()){
+  try{await api(page==='overview'?'platform/dashboard':'state');if(!draftEdit&&!dirty)render();}catch{}
  }
 });
-document.addEventListener('aim:resume',async()=>{if(S&&!dirty&&!busy&&!AIMVoice.active()){try{await api(page==='overview'?'platform/dashboard':'state');render();}catch{}}});
+document.addEventListener('aim:resume',async()=>{if(S&&!dirty&&!draftEdit&&!busy&&!AIMVoice.active()){try{await api(page==='overview'?'platform/dashboard':'state');if(!draftEdit&&!dirty)render();}catch{}}});
 // STUDIO_STARTUP
 api(page==='overview'?'platform/dashboard':'state').then(()=>render()).catch(error=>{
   $('#main').innerHTML=`<div class="empty-state"><h2>The studio could not open.</h2><p>${esc(error.message)}</p><button class="button primary" onclick="location.reload()">Try again</button></div>`;
