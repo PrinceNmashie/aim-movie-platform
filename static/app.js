@@ -316,19 +316,71 @@ function assemblyPage() {
     ${exports.length ? `<div class="section-heading"><h2>Your exported scenes</h2><p>Each export stays available when you change the arrangement.</p></div>${exports.map(a=>`<section class="panel job-card" id="assembly-${esc(a.id)}"><div class="row between wrap"><div><h3>${esc(a.name)}</h3><p class="job-meta">${a.clip_ids.length} clips · ${Number(a.duration_seconds).toFixed(1)} sec · ${a.width} × ${a.height} · ${esc(new Date(a.created).toLocaleString())}</p></div>${badge('completed')}</div>${a.video_url ? `<video controls preload="metadata" src="${esc(a.video_url)}" aria-label="${esc(a.name)}"></video><div class="row wrap">${button('Send for review →','review-output','primary small',`data-kind="assembly" data-id="${esc(a.id)}"`)}<a class="button secondary small" href="${esc(a.video_url)}?download=1">Download scene</a>${button('Load this arrangement','load-assembly','secondary small',`data-id="${esc(a.id)}"`)}${button('Continue this scene','continue-clip','ghost small',`data-id="${esc(a.clip_ids.at(-1))}"`)}</div>` : notice('The scene file is missing. Restore the video file or export the arrangement again.')}</section>`).join('')}` : ''}`;
 }
 function archivesPanel() {
-  return `<section class="panel settings-section"><div class="panel-title"><div><h3>Your movies & saved versions</h3><p>Save named checkpoints for this movie. Each new movie gets its own workspace in My Studio.</p></div><a class="button ghost small" href="/api/projects/export">Export project database</a></div><div class="row wrap">${button('Save named version','archive-project','primary')}${button('Start a new movie','new-project','secondary')}</div>${S.archives.length ? `<hr><label class="field"><span>Saved movie versions</span><select id="archive-choice">${S.archives.map(a=>`<option value="${esc(a.id)}">${esc(a.name+' · '+new Date(a.created).toLocaleString())}</option>`).join('')}</select></label><div class="row wrap" style="margin-top:14px">${button('Restore selected version','restore-project','secondary')}${button('Rename selected version','rename-archive','ghost')}</div>` : '<p class="hint">Your named versions will appear here after you save a checkpoint.</p>'}${adminInfo('<p class="hint">Keep your full persistent data directory when updating the app to retain saved versions and media.</p>')}</section>`;
+  return `<section class="panel studio-settings-card">
+    <div class="studio-settings-card-head">
+      <h2>Saved versions</h2>
+      ${button('Save version','archive-project','secondary small')}
+    </div>
+    ${S.archives.length ? `<div class="studio-version-row">
+      <label class="field"><span>Version</span><select id="archive-choice">
+        ${S.archives.map(a=>`<option value="${esc(a.id)}">${esc(a.name)} · ${esc(new Date(a.created).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}))}</option>`).join('')}
+      </select></label>
+      <div class="row wrap">
+        ${button('Restore version','restore-project','secondary small')}
+        ${button('Rename','rename-archive','ghost small')}
+      </div>
+    </div>` : '<p class="hint">Save a checkpoint you can restore later.</p>'}
+    <a class="studio-settings-export" href="/api/projects/export">Export project database</a>
+  </section>`;
 }
 
 function settingsPage() {
   const prefs = S.settings;
-  return heading('STUDIO SETTINGS','Make the studio work for you.','Choose your preferences and manage saved versions.') +
-    `<section class="panel settings-section"><div class="panel-title"><div><h3>AI models</h3><p>Your selection applies immediately to new requests. Existing work stays saved.</p></div>${button('Refresh available models','refresh-models','ghost small',!S.configured.openai ? 'disabled' : '')}</div><form id="settings-form"><div class="field-grid"><label class="field"><span>GPT model for conversation and all text layers</span><select data-setting="model">${S.text_models.map(m=>`<option value="${esc(m)}" ${m===prefs.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></label><label class="field"><span>Image model for character sheets</span><select data-setting="image_model">${S.image_models.map(m=>`<option value="${esc(m)}" ${m===prefs.image_model ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></label><label class="field"><span>Image quality</span><select data-setting="image_quality">${['low','medium','high'].map(q=>`<option ${q===prefs.image_quality ? 'selected' : ''}>${q}</option>`).join('')}</select><div class="hint">Low is useful for drafts. Higher quality can cost more and take longer.</div></label>${adminInfo(field('Custom GPT model ID','','custom_model',{placeholder:'Optional exact API model ID'})+field('Custom image model ID','','custom_image_model',{placeholder:'Optional GPT Image model ID',full:true}))}</div><button class="button primary" type="submit">Save model preferences</button></form>${adminInfo('<p class="hint">Refresh loads models available to the server API account. Preferences are saved for each project.</p>')}</section>
-    ${videoSettingsPanel()}
+  const select = (label,key,choices) => `<label class="field">
+    <span>${label}</span>
+    <select data-setting="${key}">
+      ${choices.map(value=>`<option value="${esc(value)}" ${value===prefs[key]?'selected':''}>${esc(value)}</option>`).join('')}
+    </select>
+  </label>`;
+  return `<div class="studio-settings-page">
+    <header class="studio-settings-heading">
+      <h1>Studio settings</h1>
+      <p class="hint">Defaults and saved versions for this movie.</p>
+    </header>
+    <form id="settings-form">
+      <div class="studio-settings-grid">
+        <section class="panel studio-settings-card">
+          <div class="studio-settings-card-head"><h2>Creative models</h2></div>
+          <div class="studio-model-fields">
+            ${select('Conversation and writing','model',S.text_models)}
+            <div class="studio-image-fields">
+              ${select('Character image model','image_model',S.image_models)}
+              ${select('Image quality','image_quality',['low','medium','high'])}
+            </div>
+          </div>
+          ${adminInfo(`<details class="studio-settings-disclosure">
+            <summary>Advanced model options</summary>
+            <div class="studio-model-fields">
+              ${field('Custom text model ID','','custom_model',{placeholder:'Optional'})}
+              ${field('Custom image model ID','','custom_image_model',{placeholder:'Optional'})}
+              ${button('Refresh model list','refresh-models','ghost small',!S.configured.openai?'disabled':'')}
+            </div>
+          </details>`)}
+        </section>
+        ${videoSettingsPanel()}
+      </div>
+      <div class="studio-settings-actions"><button class="button primary" type="submit">Save preferences</button></div>
+    </form>
     ${archivesPanel()}
-    ${adminInfo(`<section class="panel settings-section"><div class="panel-title"><div><h3>Connections</h3><p>API keys are read from your server environment or local .env file.</p></div></div><div class="grid-two"><div><div class="row between"><h3 style="font-size:13px">OpenAI</h3>${badge(S.configured.openai ? 'configured' : 'Missing key')}</div><p class="hint">Used for the conversation, voice transcription, creative drafts, and character-sheet images.</p></div><div><div class="row between"><h3 style="font-size:13px">Runway Developer</h3>${badge(S.configured.runway ? 'configured' : 'Missing credentials')}</div><p class="hint">Used for the video models in the Runway catalog.</p></div></div><details class="details" ${!S.configured.openai || !S.configured.runway ? 'open' : ''}><summary>Connection setup</summary><p class="hint" style="margin-bottom:12px">Copy .env.example to .env, add your own keys, and restart with python app.py. Keys never appear in the model menus.</p><pre class="config-line">OPENAI_API_KEY=your_openai_key
-OPENAI_MODEL=${esc(prefs.model)}
-OPENAI_IMAGE_MODEL=${esc(prefs.image_model)}
-RUNWAYML_API_SECRET=your_runway_developer_key</pre><p class="hint">OpenAI API usage is separate from your ChatGPT subscription. Runway video generation uses your Runway Developer project credits. This local test server supports separate creator accounts and private projects. All paid requests use the server owner’s API accounts.</p></details></section>`)}`;
+    ${adminInfo(`<details class="panel studio-settings-card studio-settings-connections">
+      <summary>Connection status</summary>
+      <dl class="studio-connection-list">
+        ${[['OpenAI','openai'],['Runway','runway'],['Alibaba','alibaba']].map(([label,key])=>
+          `<div><dt>${label}</dt><dd>${badge(S.configured[key]?'configured':'Setup needed')}</dd></div>`).join('')}
+      </dl>
+      <p class="hint">Manage API keys in your deployment environment.</p>
+    </details>`)}
+  </div>`;
 }
 function activityPage() {
   return heading('YOUR CREATIVE DECISIONS','A record of your direction.','Keep track of the ideas, edits, approvals, and choices you made.') +
@@ -668,14 +720,13 @@ document.addEventListener('submit',async event=>{
     await sendConversation(text);
   }
   if(id==='settings-form') {
-    const updates=Object.fromEntries($$('[data-setting]').map(e=>[e.dataset.setting,e.value]));
-    const custom=($('[data-field="custom_model"]')?.value||'').trim();if(custom) updates.model=custom;
-    const image=($('[data-field="custom_image_model"]')?.value||'').trim();if(image) updates.image_model=image;
-    await run('Saving model preferences…',()=>api('settings',updates),{message:'Model preferences saved.'});
-  }
-  if(id==='video-settings-form'){
-    const updates=Object.fromEntries($$('[data-video-setting]').map(e=>[e.dataset.videoSetting,e.value]));
-    await run('Saving video provider settings…',()=>api('settings',updates),{message:'Video provider settings saved.'});
+    const updates=Object.fromEntries($$('[data-setting], [data-video-setting]',event.target)
+      .map(input=>[input.dataset.setting||input.dataset.videoSetting,input.value]));
+    const custom=$('[data-field="custom_model"]',event.target)?.value.trim();
+    const image=$('[data-field="custom_image_model"]',event.target)?.value.trim();
+    if(custom)updates.model=custom;
+    if(image)updates.image_model=image;
+    await run('Saving studio preferences…',()=>api('settings',updates),{message:'Studio preferences saved.'});
   }
   if(id==='activity-form')await run('Saving your creative decision…',()=>api('activity',{note:$('[data-field="note"]').value}),{message:'Creative decision recorded.'});
 });
