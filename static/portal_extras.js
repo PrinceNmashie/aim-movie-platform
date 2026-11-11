@@ -1,10 +1,3 @@
-function reviewVisible(x){
- const filter=P.filter||'pending';if(filter==='all')return true;
- if(filter==='available')return x.status==='submitted'&&x.user_id!==P.auth.user.id;
- if(filter==='mine')return x.status==='in_review'&&x.reviewer_id===P.auth.user.id;
- if(filter==='claimed')return x.status==='in_review'&&x.reviewer_id!==P.auth.user.id;
- return ['submitted','in_review'].includes(x.status);
-}
 'use strict';
 function extendedPost(r){return AIMFeed.card(r);}
 function extendedFeedPage(){
@@ -62,5 +55,3 @@ async function extraSubmit(form,v){
 }
 document.addEventListener('aim:tasks',event=>{if(location.pathname==='/account/tasks')tasksPage(event.detail.items);});
 document.addEventListener('aim:inbox',()=>{if(location.pathname==='/account/notifications')loadInbox().catch(()=>{});});
-document.addEventListener('aim:resume',()=>{if(location.pathname==='/review'&&!P.reviewDirty)loadQueue().catch(()=>{});});
-document.addEventListener('input',event=>{if(event.target.closest('#decision-form,#takedown-form,#keep-published-form'))P.reviewDirty=true;});
