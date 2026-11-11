@@ -4,7 +4,6 @@ import hashlib
 import json
 import logging
 import os
-import secrets
 import time
 import uuid
 
@@ -20,7 +19,6 @@ POLL_SECONDS = 12
 POLL_LIMIT = 30 * 60
 LEASE = 5 * 60
 MAX_IN_FLIGHT = 20
-AUDIT_PERCENT = 5
 LOG = logging.getLogger(__name__)
 
 
@@ -204,9 +202,8 @@ def finish(job, verdict, reason, findings=()):
         if automatic:
             reason = 'Checks complete. Preview your creation and publish when you are ready.'
         c.execute('''UPDATE discover_checks SET phase='complete',verdict=?,reason=?,evidence=?,
-                     auto_approved=?,spot_check=?,owner='',lease_until=0 WHERE submission_id=?''',
-                  (verdict, reason, json.dumps(list(findings)[:12]), int(automatic),
-                   int(automatic and secrets.randbelow(100) < AUDIT_PERCENT), sid))
+                     auto_approved=?,owner='',lease_until=0 WHERE submission_id=?''',
+                  (verdict, reason, json.dumps(list(findings)[:12]), int(automatic), sid))
         c.execute('UPDATE submissions SET status=?,decision_note=? WHERE id=?',
                   (status, reason if verdict == 'file_problem' else '', sid))
         p.event(c, sid, 'automatic_clearance' if automatic else 'check_' + verdict, reason,
@@ -284,16 +281,3 @@ def log_problem(job, step, exc):
     # SDK errors can contain URLs, content, or credentials. Use fixed messages and types.
     detail = str(exc) if isinstance(exc, moderation_client.ModerationError) else type(exc).__name__
     LOG.warning('Discover check %s could not %s: %s', job['id'], step, detail)
-
-
-def metrics(c):
-    return dict(c.execute('''
-SELECT count(*) FILTER (WHERE phase!='complete') AS pending,
-       count(*) FILTER (WHERE auto_approved=1) AS cleared,
-       count(*) FILTER (WHERE mode='pilot' AND verdict='clear') AS pilot_clear,
-       count(*) FILTER (WHERE mode='pilot' AND verdict='clear' AND EXISTS (
-           SELECT 1 FROM review_events e WHERE e.submission_id=discover_checks.submission_id
-           AND e.action IN ('changes_requested','rejected')
-       )) AS pilot_staff_concern
-FROM discover_checks
-''').fetchone())
