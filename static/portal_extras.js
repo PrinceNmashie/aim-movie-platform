@@ -63,4 +63,4 @@ async function extraSubmit(form,v){
 document.addEventListener('aim:tasks',event=>{if(location.pathname==='/account/tasks')tasksPage(event.detail.items);});
 document.addEventListener('aim:inbox',()=>{if(location.pathname==='/account/notifications')loadInbox().catch(()=>{});});
 document.addEventListener('aim:resume',()=>{if(location.pathname==='/review'&&!P.reviewDirty)loadQueue().catch(()=>{});});
-document.addEventListener('input',event=>{if(event.target.closest('#decision-form,#takedown-form'))P.reviewDirty=true;});
+document.addEventListener('input',event=>{if(event.target.closest('#decision-form,#takedown-form,#keep-published-form'))P.reviewDirty=true;});
