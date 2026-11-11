@@ -1,5 +1,5 @@
 'use strict';
-const P={auth:null,mode:'foryou',items:[],next:0,queue:[],selected:new URLSearchParams(location.search).get('submission'),reports:[],policy:null,tab:'login',working:false,mine:null,profile:null,profileItems:[],profileNext:null,likedItems:[],likedNext:null,likedTotal:0};
+const P={auth:null,mode:'foryou',items:[],next:0,tab:'login',working:false,mine:null,profile:null,profileItems:[],profileNext:null,likedItems:[],likedNext:null,likedTotal:0};
 const pe=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const pm=()=>document.querySelector('#portal-main');
 const pt=()=>document.querySelector('meta[name="aim-token"]').content;
@@ -50,114 +50,6 @@ function likesPage(){collectionPage('likes',P.likedItems,P.likedNext,P.likedTota
 async function loadLikes(reset=true){
  const r=await req('account/likes?offset='+(reset?0:P.likedNext));P.likedItems=reset?r.items:P.likedItems.concat(r.items);P.likedNext=r.next_offset;P.likedTotal=r.total;likesPage();
 }
-function reviewTime(seconds){
- return Math.floor(seconds/60)+':'+String(Math.floor(seconds%60)).padStart(2,'0');
-}
-function screeningPanel(item){
- const check=item.screening;
- if(!check)return '';
- const labels={pending:'Check pending',clear:'No flags found',flagged:'Policy flag',unavailable:'Incomplete check',file_problem:'Video needs changes',withdrawn:'Withdrawn'};
- return `<section class="portal-card">
-   <div class="row between wrap"><h3>Automated check</h3><span class="review-status">${pe(labels[check.verdict]||check.verdict)}</span></div>
-   <p class="portal-muted">${pe(check.reason||'Checking the submitted video and its public details.')}</p>
-   ${check.evidence?.length?`<ul>${check.evidence.map(item=>`<li>
-     <strong>${pe(item.source)}</strong> · ${pe(item.label.replaceAll('_',' '))}
-     ${Number.isFinite(item.seconds)?`<button type="button" class="button ghost small" data-act="review-jump" data-seconds="${item.seconds}">Jump to ${reviewTime(item.seconds)}</button>`:''}
-   </li>`).join('')}</ul>`:''}
- </section>`;
-}
-function reviewDetail(r){
- const own=r.user_id===P.auth.user.id;
- const reports=P.reports.filter(item=>item.submission_id===r.id);
- const spot=r.status==='published'&&r.screening?.spot_check;
- return `<div class="portal-card">
-   <div class="row between wrap">
-     <div><span class="review-status">${pe(AIMPublication.status(r))}</span><h2 style="margin-top:15px">${pe(r.title)}</h2></div>
-     <span class="portal-muted">${pe(r.kind)} by ${pe(r.author)}</span>
-   </div>
-   ${r.screening?.verdict==='file_problem'?'':`<video id="staff-review-video" class="review-video" src="${pe(r.video_url)}" controls playsinline preload="metadata"></video>`}
-   ${screeningPanel(r)}
-   ${reports.length?`<section class="portal-card"><h3>Open viewer reports</h3><ul>${reports.map(item=>`<li>${pe(item.reason)}</li>`).join('')}</ul></section>`:''}
-   ${spot?'<p class="notice">Selected for a publication spot check.</p>':''}
-   <div class="review-copy-split">
-     <section><h3>Private notes to staff</h3><p class="portal-muted preserve-lines">${pe(r.review_notes||'No private notes.')}</p></section>
-     <section><h3>Public caption</h3><p class="portal-muted preserve-lines">${pe(r.public_caption||'No public caption.')}</p>
-       <div class="tag-row">${r.tags.map(t=>`<span class="tag">#${pe(t)}</span>`).join('')}</div>
-     </section>
-   </div>
-   ${portalAdmin(`<details class="details"><summary>Technical details</summary><p class="portal-muted">${pe(r.metadata.technical_precheck)}</p></details>`)}
-   ${r.status==='approved'?'<div class="notice">This version is ready for the creator to preview and publish.</div>':''}
-   ${r.metadata.context?.length?`<details><summary>Review adjacent clips (${r.metadata.context.length})</summary>
-     <div class="review-neighbors">${r.metadata.context.map((x,i)=>`<div><p class="portal-muted">Segment ${i+1}</p>
-       <video src="/api/review/${pe(r.id)}/context/${pe(x.index)}" controls preload="metadata"></video></div>`).join('')}</div></details>`:''}
-   <details style="margin:20px 0"><summary>Rules attached to this submission · ${pe(r.policy.version)}</summary>
-     <p class="portal-muted preserve-lines">${pe(r.policy.rules)}</p>
-   </details>
-   ${r.status==='submitted'?`<button class="button primary" data-act="review-claim" data-id="${pe(r.id)}" ${own?'disabled':''}>Claim for review</button>`:''}
-   ${own&&(['submitted','approved','published'].includes(r.status))?'<p class="portal-muted">Another staff member can review your creation.</p>':''}
-   ${r.status==='in_review'&&r.reviewer_id===P.auth.user.id?`<form id="decision-form" class="portal-form" style="margin-top:20px">
-     ${r.policy.criteria.map(c=>`<label class="check"><input type="checkbox" name="${pe(c.id)}">${pe(c.label)}</label>`).join('')}
-     <label class="check"><input type="checkbox" name="acknowledge_draft">I understand that these are draft rules, pending official AIM.movie guidelines.</label>
-     <label>Decision<select name="decision"><option value="approved">Approve &amp; return to creator</option><option value="changes_requested">Request changes</option><option value="rejected">Reject</option></select></label>
-     <label>Timecodes and feedback<textarea name="note" placeholder="Explain what you checked and what the creator can fix."></textarea></label>
-     <button class="button primary">Save review decision</button>
-   </form>`:''}
-   ${!own&&r.status==='published'&&(reports.length||spot)?`<form id="keep-published-form" class="portal-form">
-     <label>Review notes<textarea name="note" maxlength="3000" ${reports.length?'required':''}></textarea></label>
-     <button class="button secondary">${reports.length?'Close reviewed reports and keep published':'Complete spot check and keep published'}</button>
-   </form>`:''}
-   ${!own&&['approved','published'].includes(r.status)?`<form id="takedown-form" class="portal-form">
-     <label>Removal reason<textarea name="note" required></textarea></label>
-     <button class="button secondary">Revoke approval / remove post</button>
-   </form>`:''}
-   <h3 style="margin-top:28px">Review record</h3>
-   ${r.history.map(h=>`<div class="review-history"><strong>${pe(h.action.replaceAll('_',' '))}</strong> · ${pe(h.actor_name||'Staff / creator')}<p>${pe(h.note)}</p><small>${pe(new Date(h.created).toLocaleString())}</small></div>`).join('')}
- </div>`;
-}
-function reviewPage(){
- const pending=P.queue.filter(reviewVisible);
- const r=P.queue.find(item=>item.id===P.selected)||pending.find(item=>item.user_id!==P.auth.user.id)||pending[0]||P.queue[0];
- P.selected=r?.id;
- const stats=P.screeningStats;
- pm().innerHTML=`<div class="eyebrow">AIM.MOVIE / STAFF WORKSPACE</div>
- <h1 class="portal-title">Discover review</h1>
- <p class="portal-lead">Review submissions that need a staff decision, viewer reports, and a sample of automatically cleared posts.</p>
- ${stats&&P.reviewMode!=='manual'?`<p class="portal-muted"><strong>${P.reviewMode==='pilot'?'Pilot':'Automatic'} mode</strong> · ${stats.pending} checks pending · ${stats.cleared} automatically cleared. Pilot results: ${stats.pilot_clear} clear, ${stats.pilot_staff_concern} of those needed changes or were rejected by staff.</p>`:''}
- <div class="review-layout">
-   <aside class="review-queue">
-     <div class="row between"><h3>Review queue</h3><button class="button ghost small" data-act="review-refresh">Refresh</button></div>
-     ${P.reports.length?`<section class="portal-card"><h3>Viewer reports</h3>
-       ${P.reports.map(x=>`<button class="queue-item" data-act="review-select" data-id="${pe(x.submission_id)}"><strong>${pe(x.title)}</strong><small>${pe(x.reason)}</small></button>`).join('')}
-     </section>`:''}
-     ${P.spotChecks.length?`<section class="portal-card"><h3>Publication spot checks</h3>
-       ${P.spotChecks.map(x=>`<button class="queue-item" data-act="review-select" data-id="${pe(x.id)}">${pe(x.title)}</button>`).join('')}
-     </section>`:''}
-     <label class="field"><span>Filter</span><select id="review-filter">${[['pending','Awaiting review'],['available','Available to claim'],['mine','Claimed by me'],['claimed','Claimed by others'],['all','All submissions']].map(([value,label])=>`<option value="${value}" ${(P.filter||'pending')===value?'selected':''}>${label}</option>`).join('')}</select></label>
-     <div style="margin-top:15px">${pending.map(x=>`<button class="queue-item ${x.id===r?.id?'selected':''}" data-act="review-select" data-id="${pe(x.id)}">
-       <small>${pe(x.author)} · ${pe(x.kind)}</small><strong>${pe(x.title)}</strong>
-       <span class="review-status">${pe(AIMPublication.status(x))}${x.screening?.verdict==='flagged'?' · Policy flag':''}${x.reviewer_name?' · '+pe(x.reviewer_name):''}</span>
-     </button>`).join('')||'<p class="portal-muted">No submissions match this filter.</p>'}</div>
-   </aside>
-   <section>
-     ${r?reviewDetail(r):'<div class="no-content"><h2>Ready for the first submission.</h2><p>Creators submit from the Share tab in their studio.</p></div>'}
-     ${portalAdmin(`<details class="portal-card"><summary>Edit provisional rules for future submissions</summary>
-       <form id="policy-form" class="portal-form" style="margin-top:20px"><textarea name="rules" rows="8" minlength="20" maxlength="12000">${pe(P.policy.rules)}</textarea>
-       <p class="portal-muted">Each submission is evaluated under the rules captured when it was submitted.</p>
-       <button class="button secondary">Save new draft rules</button></form>
-     </details>`)}
-   </section>
- </div>`;
-}
-async function loadQueue(){
- const result=await req('review/queue?selected='+encodeURIComponent(P.selected||''));
- P.queue=result.items;
- P.reports=result.reports;
- P.spotChecks=result.spot_checks||[];
- P.screeningStats=result.screening_stats;
- P.reviewMode=result.review_mode;
- P.policy=result.policy;
- reviewPage();
-}
 async function act(a,e){if(P.working)return;P.working=true;try{
  if(await extraAct(a,e))return;
  if(a==='auth-login'||a==='auth-register'){P.tab=a.endsWith('register')?'register':'login';authPage();}
@@ -198,21 +90,10 @@ async function act(a,e){if(P.working)return;P.working=true;try{
  if(a==='logout'){await req('auth/logout',{});location.href='/login';}
  if(a==='open-project'){await req('platform/projects/select',{id:e.dataset.id});location.href=e.dataset.dest==='share'?'/share':'/overview';}
  if(a==='withdraw'){await req('community/'+e.dataset.id+'/withdraw',{});await account();}
- if(a==='review-select'){if(P.reviewDirty&&!confirm('Discard unsaved review notes?'))return;P.reviewDirty=false;P.selected=e.dataset.id;if(P.queue.some(x=>x.id===P.selected))reviewPage();else await loadQueue();}
- if(a==='review-refresh'){
-  if(P.reviewDirty&&!confirm('Discard unsaved review notes?'))return;
-  P.reviewDirty=false;
-  await loadQueue();
- }
- if(a==='review-jump'){
-  const video=document.querySelector('#staff-review-video'),seconds=Number(e.dataset.seconds);
-  if(video&&Number.isFinite(seconds)){video.currentTime=seconds;video.focus();}
- }
- if(a==='review-claim'){await req('review/'+e.dataset.id+'/claim',{});await loadQueue();}
+ if(location.pathname==='/review')await AIMStaffReview.action(a,e);
  }catch(error){say(error.message);}finally{P.working=false;}}
 document.addEventListener('click',e=>{const el=e.target.closest('[data-act]');if(el){e.preventDefault();act(el.dataset.act,el);}});
-document.addEventListener('change',e=>{if(e.target.id==='review-filter'){P.filter=e.target.value;reviewPage();}});
-document.addEventListener('submit',async e=>{e.preventDefault();if(P.working)return;P.working=true;const form=e.target;if(form.closest('.engagement-dialog')){P.working=false;return;}const v=Object.fromEntries(new FormData(form));const b=form.querySelector('button[type=submit],button:not([type])');if(b)b.disabled=true;try{
+document.addEventListener('submit',async e=>{e.preventDefault();if(P.working)return;P.working=true;const form=e.target;if(form.closest('.engagement-dialog')){P.working=false;return;}const v=Object.fromEntries(new FormData(form));const b=e.submitter||form.querySelector('button[type=submit],button:not([type])');if(b)b.disabled=true;try{
  if(await extraSubmit(form,v))return;
  if(form.id==='auth-form'){const j=await req('auth/'+P.tab,v);location.href=j.redirect||'/discover';}
  if(form.id==='profile-form'&&!form.elements.name.readOnly){await req('account/profile',v);await settings();say('Your public profile was updated.');}
@@ -221,14 +102,7 @@ document.addEventListener('submit',async e=>{e.preventDefault();if(P.working)ret
  if(form.id==='delete-account-form'){if(!confirm('Permanently delete your account, projects and posts? This cannot be undone.'))return;const j=await req('account/delete',v);pm().innerHTML='<section class="portal-card"><h1>Account deleted</h1><p>Your account and posts are no longer accessible.</p><p>'+ (j.cleanup_pending?'File cleanup is pending and will retry when the server restarts.':'Your active project and media files were removed.')+'</p><a class="button secondary" href="/discover">Browse Discover</a></section>';document.querySelector('#platform-navigation').innerHTML='<a href="/discover">Discover</a><a href="/login">Sign in</a>';}
  if(form.id==='new-project-form'){await req('platform/projects',v);location.href='/overview';}
  if(form.id==='password-form'){await req('account/password',v);P.auth=await req('auth/state');document.querySelector('meta[name="aim-token"]').content=P.auth.csrf;say('Password updated. Other sessions were signed out.');form.reset();}
- if(form.id==='decision-form'){const checks=Object.fromEntries(P.queue.find(x=>x.id===P.selected).policy.criteria.map(c=>[c.id,!!form.elements[c.id]?.checked]));await req('review/'+P.selected+'/decision',{decision:v.decision,note:v.note,checks,acknowledge_draft:form.elements.acknowledge_draft.checked});P.reviewDirty=false;await loadQueue();say('Review decision saved.');}
- if(form.id==='keep-published-form'){
-  const reports=P.reports.filter(item=>item.submission_id===P.selected).map(({id,reason,created})=>({id,reason,created}));
-  await req('review/'+P.selected+'/keep-published',{reports,note:v.note});
-  P.reviewDirty=false;await loadQueue();say('Publication review saved.');
- }
- if(form.id==='takedown-form'){await req('review/'+P.selected+'/decision',{decision:'taken_down',note:v.note});P.reviewDirty=false;await loadQueue();}
- if(form.id==='policy-form'){await req('review/policy',v);await loadQueue();say('New draft rules saved for future submissions.');}
+ if(location.pathname==='/review')await AIMStaffReview.submit(form,v,e.submitter);
  }catch(error){const err=form.querySelector('#form-error');if(err)err.textContent=error.message;else say(error.message);}finally{P.working=false;if(b)b.disabled=false;}});
 
 function settingsPage(){
@@ -249,4 +123,4 @@ async function loadAccounts(offset=0){
  document.querySelector('#admin-users').innerHTML=`<p class="portal-muted">${r.total} matching accounts · showing ${r.items.length?offset+1:0}–${offset+r.items.length}</p>${r.items.map(u=>`<article class="account-user"><div><strong>${pe(u.name)}</strong><p class="portal-muted">${pe(u.email)} · ${pe(u.role==='creator'?'Member':u.role)}${u.id===P.auth.user.id?' · You':''}</p></div><form class="role-form portal-form"><input type="hidden" name="user_id" value="${pe(u.id)}"><label>Role<select name="role">${[['creator','Member'],['reviewer','Reviewer'],['admin','Administrator']].map(([value,label])=>`<option value="${value}" ${u.role===value?'selected':''}>${label}</option>`).join('')}</select></label><label>Your current password<input type="password" name="current_password" autocomplete="current-password" required></label><button class="button secondary small">Save role</button></form></article>`).join('')}<div class="row wrap"><button class="button ghost small" data-act="admin-reset">First page</button>${r.next_offset!==null?'<button class="button secondary small" data-act="admin-next">Next page →</button>':''}</div>`;
 }
 
-(async()=>{try{P.auth=await req('auth/state');document.querySelector('meta[name="aim-token"]').content=P.auth.csrf;nav();if(location.pathname==='/login')authPage();else if(location.pathname==='/discover')await loadFeed();else if(location.pathname==='/account/settings')await settings();else if(location.pathname==='/account/likes')await loadLikes();else if(location.pathname==='/account/saved')await loadSaved();else if(location.pathname==='/account/tasks')await loadTasks();else if(location.pathname==='/account/notifications')await loadInbox();else if(location.pathname.startsWith('/watch/'))await loadWatch();else if(location.pathname==='/review')await loadQueue();else if(location.pathname.startsWith('/creators/'))await loadProfile();else if(P.auth.user)await account();else location.href='/login';}catch(e){pm().textContent=e.message;}})();
+(async()=>{try{P.auth=await req('auth/state');document.querySelector('meta[name="aim-token"]').content=P.auth.csrf;nav();if(location.pathname==='/login')authPage();else if(location.pathname==='/discover')await loadFeed();else if(location.pathname==='/account/settings')await settings();else if(location.pathname==='/account/likes')await loadLikes();else if(location.pathname==='/account/saved')await loadSaved();else if(location.pathname==='/account/tasks')await loadTasks();else if(location.pathname==='/account/notifications')await loadInbox();else if(location.pathname.startsWith('/watch/'))await loadWatch();else if(location.pathname==='/review')await AIMStaffReview.load();else if(location.pathname.startsWith('/creators/'))await loadProfile();else if(P.auth.user)await account();else location.href='/login';}catch(e){pm().textContent=e.message;}})();

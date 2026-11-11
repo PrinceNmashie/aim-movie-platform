@@ -946,6 +946,22 @@ def install(app,api):
             notifications.add(c,user()['id'],'review_assigned','You claimed a creation for review.','/review?submission='+sid,sid)
         return jsonify(ok=True)
 
+    @app.post('/api/review/<sid>/release')
+    def release_review(sid):
+        required_staff()
+        with db() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row = c.execute('SELECT user_id, reviewer_id, status, parent_id FROM submissions WHERE id=?', (sid,)).fetchone()
+            if not row:
+                abort(404, 'Creation not found.')
+            if row['status'] != 'in_review' or row['reviewer_id'] != user()['id']:
+                abort(409, 'Only the assigned reviewer can release an active review.')
+            c.execute("UPDATE submissions SET status='submitted', reviewer_id=NULL WHERE id=?", (sid,))
+            event(c, sid, 'review_released', 'Reviewer returned the submission to the queue.')
+            notifications.clear_review(c, sid)
+            notifications.review_available(c, sid, row['user_id'], bool(row['parent_id']))
+        return jsonify(ok=True)
+
     @app.post('/api/review/<sid>/decision')
     def decision(sid):
         required_staff();v=payload();action=v.get('decision');note=str(v.get('note','')).strip()[:3000]

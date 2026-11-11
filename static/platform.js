@@ -19,7 +19,7 @@ function reviewSource(choice){
  return null;
 }
 function currentReviewSelection(){return reviewSelection?.project_id===S.platform.project_id?reviewSource(reviewSelection.choice):null;}
-function reviewSourcePreview(source){return source?`<div class="review-source-preview"><div><span class="badge">Saved ${esc(source.kind)}</span><h3>${esc(source.title)}</h3><p class="hint">This exact saved output will be checked for Discover.</p></div><video src="${esc(source.video_url)}" controls playsinline preload="metadata" aria-label="Selected review video"></video></div>`:'';}
+function reviewSourcePreview(source){return source?`<div class="review-source-preview"><div><span class="badge">Saved ${esc(source.kind)}</span><h3>${esc(source.title)}</h3><p class="hint">Preview the version you’re sending for review.</p></div><video src="${esc(source.video_url)}" controls playsinline preload="metadata" aria-label="Selected review video"></video></div>`:'';}
 async function openOutputForReview(kind,id){
  const source=reviewSource(kind+':'+id);if(!source)throw new Error('That output is no longer available. Refresh the studio and try again.');
  const previous=reviewSelection;reviewSelection={project_id:S.platform.project_id,choice:source.choice};
@@ -67,7 +67,7 @@ function sharePage(){
  return heading('SHARE / DISCOVER','Ready for an audience?','Choose the clip or finished scene you want people to see. Preview your takes and assemble your movie privately in the studio.')+
  `<div class="source-layout">
    <section class="panel">
-     <h3>Submit to Discover</h3>
+     <h3>Send a video for review</h3>
      <div id="review-source-preview">${reviewSourcePreview(selected)}</div>
      ${failure?`<div class="notice" role="alert"><strong>Couldn’t prepare the video.</strong> ${esc(recent.error||'Choose a playable video and submit again.')}</div>`:''}
      <form id="share-form" class="portal-form" enctype="multipart/form-data">
@@ -84,7 +84,7 @@ function sharePage(){
        <details><summary>Add private notes for staff</summary><label>Private review notes<textarea name="review_notes" maxlength="2000" placeholder="Include any context staff may need."></textarea></label></details>
        <label>Revised version of<select name="parent_id">${shareVersions(subs)}</select></label>
        <label class="check"><input type="checkbox" name="rights_confirmed" value="true" required>I can share this creation, including its source material, likenesses, audio and other included assets.</label>
-       <button class="button primary">${automatic?'Start publication check':'Send for publication review'} →</button>
+       <button class="button primary">Send for review →</button>
      </form>
    </section>
    <aside><section class="panel">
@@ -163,7 +163,7 @@ async function platformSubmit(form){
   if(choice&&file?.size)throw new Error('Choose an existing creation or upload a video, one at a time.');
   if(choice){f.delete('file');const [type,id]=choice.split(':');f.append(type==='job'?'job_id':'assembly_id',id);}else if(!file?.size)throw new Error('Choose a completed creation or upload a video.');
   f.append('project_id',S.platform.project_id);f.append('workspace_id',S.workspace_id);f.delete('source');if(!f.get('parent_id'))f.delete('parent_id');
-  const success=await run('Preparing your review copy…',async()=>{await portalRequest('community/submit',f);await api('state');reviewSelection=null;},{copy:'Saving the submitted version and checking playback.',message:'Submission saved. Check its status here before you publish.'});
+  const success=await run('Sending for review…',async()=>{await portalRequest('community/submit',f);await api('state');reviewSelection=null;},{copy:'Saving the submitted version and checking playback.',message:'Submission saved. Check its status here before you publish.'});
   if(success){$('#review-status-list')?.scrollIntoView?.({block:'start',behavior:'smooth'});$('#review-status-list')?.focus?.({preventScroll:true});}return true;
  }
  return false;
