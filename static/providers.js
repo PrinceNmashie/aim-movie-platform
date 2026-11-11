@@ -113,11 +113,30 @@ function referenceRole(slot){
  return S.references[slot].binding.kind==='last_frame'?'Continuity frame':'Visual reference';
 }
 function videoSettingsPanel(){
- const p=S.settings;
- return `<section class="panel settings-section"><h3>Video generator</h3><form id="video-settings-form"><div class="field-grid"><label class="field"><span>Default service</span><select data-video-setting="video_provider"><option value="runway" ${p.video_provider==='runway'?'selected':''}>Runway</option><option value="alibaba" ${p.video_provider==='alibaba'?'selected':''}>Alibaba Wan 3.0</option></select></label>${adminInfo(`<label class="field"><span>Alibaba region</span><select data-video-setting="wan_region">${S.providers.regions.map(r=>`<option value="${esc(r.id)}" ${r.id===p.wan_region?'selected':''}>${esc(r.name)}</option>`).join('')}</select></label><label class="field full"><span>Alibaba workspace ID</span><input data-video-setting="wan_workspace" value="${esc(p.wan_workspace||'')}"></label>`)}</div><button class="button primary" type="submit">Save preferences</button></form>${adminInfo(`<details class="details"><summary>Connect provider API keys</summary><p class="hint">Add keys in Render Environment and redeploy, or in .env locally and restart. Runway Developer credits are separate from a consumer subscription.</p><pre class="config-line">RUNWAYML_API_SECRET=your_runway_developer_key
-ALIBABA_API_KEY=your_alibaba_key
-ALIBABA_WORKSPACE_ID=your_workspace_id
-ALIBABA_REGION=${esc(p.wan_region)}</pre></details><div class="row wrap"><span>Runway ${badge(S.configured.runway?'configured':'Setup needed')}</span><span>Alibaba ${badge(S.configured.alibaba?'configured':'Setup needed')}</span></div>`)}</section>`;
+ const prefs=S.settings;
+ return `<section class="panel studio-settings-card">
+   <div class="studio-settings-card-head"><h2>Video generator</h2></div>
+   <label class="field">
+     <span>Default provider</span>
+     <select data-video-setting="video_provider">
+       <option value="runway" ${prefs.video_provider==='runway'?'selected':''}>Runway</option>
+       <option value="alibaba" ${prefs.video_provider==='alibaba'?'selected':''}>Alibaba Wan 3.0</option>
+     </select>
+   </label>
+   ${adminInfo(`<details class="studio-settings-disclosure">
+     <summary>Alibaba connection options</summary>
+     <div class="studio-model-fields">
+       <label class="field"><span>Region</span>
+         <select data-video-setting="wan_region">
+           ${S.providers.regions.map(r=>`<option value="${esc(r.id)}" ${r.id===prefs.wan_region?'selected':''}>${esc(r.name)}</option>`).join('')}
+         </select>
+       </label>
+       <label class="field"><span>Workspace ID</span>
+         <input data-video-setting="wan_workspace" value="${esc(prefs.wan_workspace||'')}">
+       </label>
+     </div>
+   </details>`)}
+ </section>`;
 }
 async function changeVideoOption(input){
  const field=input.dataset.videoOption,value=input.type==='checkbox'?input.checked:input.value;
