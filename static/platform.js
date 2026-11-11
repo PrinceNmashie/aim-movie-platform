@@ -7,7 +7,7 @@ function platformHeader(){
  if(page==='overview'){$('#studio-tabs').innerHTML='';return;}
  const groups=[['Develop','idea',['source','idea','brief']],['Plan','characters',['characters','script','shots']],['Produce','render',['render','library','assembly']],['Share','share',['share']]];
  const group=groups.find(g=>g[2].includes(page));
- $('#studio-tabs').innerHTML=`<div class="studio-breadcrumb"><a class="studio-back-link" href="/overview">← My Studio</a><span>${esc(S.vision.title||S.conversation_overview?.title||S.platform.projects.find(x=>x.id===S.platform.project_id)?.name||'Untitled movie')} ${isAdmin()&&!S.platform.paid_enabled?' · Paid API calls are off':''}</span></div><nav class="studio-main-tabs" aria-label="Movie workspace">${groups.map(([label,slug,pages])=>`<a href="/${slug}" data-nav="${slug}" class="${pages.includes(page)?'active':''}">${label}</a>`).join('')}<a href="/settings" data-nav="settings" class="studio-settings-link ${page==='settings'?'active':''}" aria-label="Studio settings">${AIMIcons.svg('gear')} Settings</a></nav><nav class="studio-step-tabs" aria-label="Current production steps">${(group?.[0]==='Develop'?[['idea','Your idea'],['source','Adapt a story'],['brief','Creative brief']]:group?.[0]==='Plan'?[['characters','Characters'],['script','Script'],['shots','Shots']]:group?.[0]==='Produce'?[['render','Render'],['library','Clips'],['assembly','Assemble']]:[['share','Submissions'],['activity','Creative history']]).map(([slug,label])=>`<a href="/${slug}" data-nav="${slug}" class="${slug===page?'active':''}">${label}</a>`).join('')}</nav>`;
+ $('#studio-tabs').innerHTML=`<div class="studio-breadcrumb"><a class="studio-back-link" href="/overview">← My Studio</a><span>${esc(S.vision.title||S.conversation_overview?.title||S.platform.projects.find(x=>x.id===S.platform.project_id)?.name||'Untitled movie')} ${isAdmin()&&!S.platform.paid_enabled?' · Paid API calls are off':''}</span></div><nav class="studio-main-tabs" aria-label="Movie workspace">${groups.map(([label,slug,pages])=>`<a href="/${slug}" data-nav="${slug}" class="${pages.includes(page)?'active':''}">${label}</a>`).join('')}<a href="/settings" data-nav="settings" class="studio-settings-link ${page==='settings'?'active':''}" aria-label="Studio settings">${AIMIcons.svg('gear')} Settings</a></nav>${page==='settings'?'':`<nav class="studio-step-tabs" aria-label="Current production steps">${(group?.[0]==='Develop'?[['idea','Your idea'],['source','Adapt a story'],['brief','Creative brief']]:group?.[0]==='Plan'?[['characters','Characters'],['script','Script'],['shots','Shots']]:group?.[0]==='Produce'?[['render','Render'],['library','Clips'],['assembly','Assemble']]:[['share','Submissions'],['activity','Creative history']]).map(([slug,label])=>`<a href="/${slug}" data-nav="${slug}" class="${slug===page?'active':''}">${label}</a>`).join('')}</nav>`}`;
 }
 function projectPicker(){return `<section class="panel" style="margin-bottom:25px"><div class="panel-title"><div><div class="eyebrow">YOUR PROJECTS</div><h3>A studio for every story.</h3></div><a href="/account" class="button secondary small">Manage projects & account →</a></div><div class="row wrap"><select id="platform-project" class="portal-input" style="max-width:320px" aria-label="Current project">${S.platform.projects.map(p=>`<option value="${p.id}" ${p.id===S.platform.project_id?'selected':''}>${esc(p.name)}</option>`).join('')}</select>${link('Import a whole book','source','secondary small')}${link('Type or talk through an idea','idea','ghost small')}</div></section>`;}
 function sourcePage(){return adaptationPage();}
@@ -61,7 +61,12 @@ function shareStatus(submissions) {
 function sharePage(){
  const selected=currentReviewSelection(),subs=S.platform.submissions;
  const clips=S.jobs.filter(j=>j.status==='COMPLETED'&&j.video_url);
- const automatic=S.platform.discover_review_mode!=='manual';
+ const reviewMode=S.platform.discover_review_mode;
+ const reviewCopy={
+  auto:'Videos that clear the automatic checks are ready to publish. Flags and incomplete checks go to staff.',
+  pilot:'Automatic checks run before staff make the review decision.',
+  manual:'Staff review the video and public details you submit.'
+ };
  const recent=(S.tasks||[]).find(t=>t.label==='Review submission');
  const failure=recent&&['failed','interrupted'].includes(recent.status);
  return heading('SHARE / DISCOVER','Ready for an audience?','Choose the clip or finished scene you want people to see. Preview your takes and assemble your movie privately in the studio.')+
@@ -90,8 +95,7 @@ function sharePage(){
    <aside><section class="panel">
      <div class="eyebrow">PUBLICATION PATH</div>
      <h3 style="margin-top:12px">You choose when to publish.</h3>
-     <p class="hint">${automatic?'A moderation service checks this video and its public details in the background. Staff can review flags or incomplete checks.':'Staff review the video and public details you submit.'}</p>
-     ${S.platform.discover_review_mode==='pilot'?'<p class="hint">During the pilot, staff make the final review decision.</p>':''}
+     <p class="hint">${reviewCopy[reviewMode]||reviewCopy.manual}</p>
      <p class="hint">When the status reads Ready to publish, preview the post and choose Publish. Each revision has its own check.</p>
      <a href="/discover" class="button secondary small">Visit Discover →</a>
      <details style="margin-top:18px"><summary>Current draft rules</summary><p class="hint preserve-lines">${esc(S.platform.policy.rules)}</p></details>
