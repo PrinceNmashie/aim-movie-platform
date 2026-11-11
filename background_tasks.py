@@ -18,6 +18,7 @@ from werkzeug.exceptions import HTTPException
 import store
 import studio
 import notifications
+import discover_review
 
 _TASK = ContextVar('aim_background_task', default=None)
 _WORKERS = {}
@@ -100,10 +101,13 @@ def enqueue():
         # Browser retries can choose a different multipart boundary for the same files.
         fields=sorted((k,list(request.form.getlist(k))) for k in request.form)
         files=[]
-        for key in sorted(request.files):
-            for upload in request.files.getlist(key):
-                blob=upload.read();upload.stream.seek(0)
-                files.append((key,upload.filename,upload.content_type,hashlib.sha256(blob).hexdigest()))
+        for field in sorted(request.files):
+            for upload in request.files.getlist(field):
+                digest=hashlib.sha256()
+                for chunk in iter(lambda: upload.read(1024*1024),b''):
+                    digest.update(chunk)
+                upload.stream.seek(0)
+                files.append((field,upload.filename,upload.content_type,digest.hexdigest()))
         digest_bytes=json.dumps([fields,files],sort_keys=True).encode()
     fingerprint=hashlib.sha256(request.path.encode()+workspace.encode()+digest_bytes).hexdigest()
     tid=uuid.uuid4().hex;input_dir=portal().project_dir(pid,uid)/'task_inputs';input_dir.mkdir(parents=True,exist_ok=True)
@@ -300,8 +304,15 @@ def ensure_worker(app,api):
                 except Exception:
                     app.logger.exception('Background task worker encountered an error');worked=False
                 time.sleep(.25 if worked else 1)
+        def check_publications():
+            while True:
+                try:worked=discover_review.run_once()
+                except Exception:
+                    app.logger.exception('Discover review worker encountered an error');worked=False
+                time.sleep(.25 if worked else 2)
         threads=[threading.Thread(target=loop,name='aim-background-worker-'+str(i),daemon=True) for i in range(2)]
         threads.append(threading.Thread(target=maintenance,name='aim-background-maintenance',daemon=True))
+        threads.append(threading.Thread(target=check_publications,name='aim-discover-review',daemon=True))
         _WORKERS[id(app)]=threads
         for thread in threads:thread.start()
 

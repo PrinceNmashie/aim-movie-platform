@@ -19,6 +19,7 @@ import store
 import video_tools
 import notifications
 import background_tasks
+import discover_review
 import studio_dashboard
 from PIL import Image, ImageOps
 from pillow_heif import register_heif_opener
@@ -27,6 +28,8 @@ register_heif_opener(thumbnails=False, depth_images=False, aux_images=False)
 
 AVATAR_FORMATS = ('JPEG', 'PNG', 'WEBP', 'AVIF', 'HEIF')
 AVATAR_MAX_BYTES = 20 * 1024 * 1024
+AVATAR_MAX_PIXELS = 50_000_000
+AVATAR_FILENAME = re.compile(r'[a-f0-9]{32}\.jpg')
 
 ROOT = store.DATA
 DB = ROOT / 'platform.sqlite'
@@ -71,6 +74,7 @@ CREATE TABLE IF NOT EXISTS follows(user_id TEXT,creator_id TEXT,PRIMARY KEY(user
 ''')
         notifications.init(c)
         background_tasks.init(c)
+        discover_review.init(c)
         migrate_creator_publication(c)
         if 'avatar' not in {r[1] for r in c.execute('PRAGMA table_info(users)')}:
             c.execute("ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''")
@@ -104,38 +108,56 @@ def csrf():
 
 def avatar_url(account):
     name = dict(account).get('avatar', '') if account else ''
-    return '/profile-images/' + account['id'] + '/' + name if re.fullmatch(r'[a-f0-9]{32}\.jpg', name) else None
+    return '/profile-images/' + account['id'] + '/' + name if AVATAR_FILENAME.fullmatch(name) else None
 
 def avatar_directory(uid):
     if not re.fullmatch('[a-f0-9]{32}', uid):abort(404)
     return ROOT / 'users' / uid / 'profile'
 
 
+def discard_avatar_file(directory, filename):
+    if AVATAR_FILENAME.fullmatch(filename):
+        try:
+            (directory / filename).unlink(missing_ok=True)
+        except OSError:
+            pass  # Unreferenced filenames cannot be served by the profile route.
+
+
 def avatar_jpeg(*, square):
     request.max_content_length = AVATAR_MAX_BYTES + 1024 * 1024
     upload = request.files.get('file')
-    if not upload:
+    if upload is None:
         abort(400, 'Choose a photo for your profile picture.')
     blob = upload.read(AVATAR_MAX_BYTES + 1)
-    if not blob or len(blob) > AVATAR_MAX_BYTES:
-        abort(400, 'Choose a photo up to 20 MB.')
+    if not blob:
+        abort(400, 'That photo is empty. Choose another one.')
+    if len(blob) > AVATAR_MAX_BYTES:
+        abort(413, 'Choose a photo up to 20 MB.')
     try:
         with Image.open(io.BytesIO(blob), formats=AVATAR_FORMATS) as source:
-            if source.width * source.height > 50_000_000:
+            if source.width * source.height > AVATAR_MAX_PIXELS:
                 abort(400, 'Choose a photo up to 50 megapixels.')
-            if source.format != 'HEIF' and getattr(source, 'is_animated', False):
-                abort(400, 'Choose a still photo.')
+            # Use the decoder's default image, such as the HEIF primary image
+            # or the first frame of an animated WebP.
             source.draft('RGB', (2048, 2048))
             source.thumbnail((2048, 2048), Image.Resampling.LANCZOS)
             ImageOps.exif_transpose(source, in_place=True)
-            image = source.convert('RGB')
+            if source.has_transparency_data:
+                rgba = source.convert('RGBA')
+                image = Image.new('RGB', rgba.size, '#0e0f14')
+                image.paste(rgba, mask=rgba.getchannel('A'))
+            else:
+                image = source.convert('RGB')
         if square:
             image = ImageOps.fit(image, (512, 512), method=Image.Resampling.LANCZOS)
+        image.info.clear()
         output = io.BytesIO()
         image.save(output, format='JPEG', quality=90)
         output.seek(0)
         return output
-    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError):
+    except Image.DecompressionBombError:
+        abort(400, 'Choose a photo up to 50 megapixels.')
+    except (OSError, ValueError, SyntaxError, EOFError):
         abort(400, 'That photo could not be opened. Choose a JPG, PNG, WebP, AVIF, HEIC or HEIF photo.')
 
 
@@ -172,9 +194,17 @@ def policy():
     with db() as c:r=c.execute("SELECT value FROM config WHERE key='policy'").fetchone()
     return json.loads(r[0]) if r else POLICY
 
-def event(c,sid,action,note='',details=None):
+def publication_policy(selected_mode):
+    current = policy()
+    if selected_mode == 'manual':
+        return current
+    return {**current, 'criteria': [{'id':'guidelines',
+                                    'label':'The video and public details meet the content and sharing rules'}]}
+
+
+def event(c,sid,action,note='',details=None,*,actor_id=None):
     c.execute('INSERT INTO review_events(submission_id,actor_id,action,note,created,details) VALUES(?,?,?,?,?,?)',
-              (sid,user()['id'] if user() else 'demo',action,note,store.now(),json.dumps(details or {})))
+              (sid,actor_id or (user()['id'] if user() else 'demo'),action,note,store.now(),json.dumps(details or {})))
 
 def submission(sid):
     with db() as c:r=c.execute('SELECT * FROM submissions WHERE id=?',(sid,)).fetchone()
@@ -204,6 +234,10 @@ def serialize(row,private=False):
         with db() as c:
             reviewer=c.execute('SELECT name FROM users WHERE id=?',(row['reviewer_id'],)).fetchone()
             r['history']=[dict(x) for x in c.execute('SELECT e.action,e.note,e.created,e.details,e.actor_id,u.name AS actor_name FROM review_events e LEFT JOIN users u ON u.id=e.actor_id WHERE e.submission_id=? ORDER BY e.id',(row['id'],))]
+            r['screening']=discover_review.summary(c,row['id'],staff_details=staff())
+        for entry in r['history']:
+            if entry['actor_id']==discover_review.ACTOR:
+                entry['actor_name']='AIM.movie checks'
         r.update(reviewer_name=reviewer[0] if reviewer else None,project_id=row['project_id'],project_name=project[0] if project else row['title'],
                  user_id=row['user_id'],is_owner=bool(user() and user()['id']==row['user_id']),reviewer_id=row['reviewer_id'],policy=json.loads(row['policy']),
                  review_notes=row['review_notes'],decision_note=row['decision_note'],checks=json.loads(row['checks'] or '{}'),published_by=row['published_by'])
@@ -214,6 +248,7 @@ def studio_state():
     with db() as c:rows=c.execute('SELECT * FROM submissions WHERE user_id=? AND project_id=? ORDER BY created DESC,rowid DESC',(user()['id'],g.project_id)).fetchall()
     return {'user':{**{k:user()[k] for k in ('id','name','role')},'avatar_url':avatar_url(user())},'project_id':g.project_id,'projects':projects(),
             'submissions':[serialize(dict(r),True) for r in rows], 'policy':policy(),
+            'discover_review_mode':discover_review.mode(),
             'paid_enabled':os.getenv('AIM_ALLOW_PAID_API','0')=='1', 'voice_model':os.getenv('OPENAI_REALTIME_MODEL','gpt-realtime-2.1-mini')}
 
 def throttle(bucket,limit,seconds=900):
@@ -417,40 +452,50 @@ def install(app,api):
     @app.post('/api/account/avatar')
     def upload_avatar():
         output = avatar_jpeg(square=True)
-        uid=user()['id'];filename=uuid.uuid4().hex+'.jpg'
-        with api['LOCK']:
+        uid = user()['id']
+        filename = uuid.uuid4().hex + '.jpg'
+        directory = avatar_directory(uid)
+        try:
             with db() as c:
-                current=c.execute('SELECT avatar FROM users WHERE id=?',(uid,)).fetchone()
-                if not current:abort(401,'Sign in again.')
-                directory=avatar_directory(uid);directory.mkdir(parents=True,exist_ok=True)
-                path=directory/filename;path.write_bytes(output.getvalue())
-                try:c.execute('UPDATE users SET avatar=? WHERE id=?',(filename,uid))
-                except Exception:path.unlink(missing_ok=True);raise
-            if current['avatar']:
-                try:(directory/Path(current['avatar']).name).unlink(missing_ok=True)
-                except OSError:pass  # Superseded filenames are never served by the route below.
-        return jsonify(ok=True,avatar_url='/profile-images/'+uid+'/'+filename)
+                c.execute('BEGIN IMMEDIATE')
+                current = c.execute('SELECT avatar FROM users WHERE id=?', (uid,)).fetchone()
+                if not current:
+                    abort(401, 'Sign in again.')
+                directory.mkdir(parents=True, exist_ok=True)
+                (directory / filename).write_bytes(output.getbuffer())
+                c.execute('UPDATE users SET avatar=? WHERE id=?', (filename, uid))
+        except (OSError, sqlite3.Error):
+            discard_avatar_file(directory, filename)
+            app.logger.exception('Could not store profile picture for %s', uid)
+            abort(503, 'The profile picture could not be saved. Try again in a moment.')
+        discard_avatar_file(directory, current['avatar'])
+        return jsonify(ok=True, avatar_url='/profile-images/' + uid + '/' + filename)
 
     @app.post('/api/account/avatar/remove')
     def remove_avatar():
-        uid=user()['id']
-        with api['LOCK']:
-            with db() as c:
-                row=c.execute('SELECT avatar FROM users WHERE id=?',(uid,)).fetchone()
-                if not row:abort(401,'Sign in again.')
-                c.execute("UPDATE users SET avatar='' WHERE id=?",(uid,))
-            if row['avatar']:
-                try:(avatar_directory(uid)/Path(row['avatar']).name).unlink(missing_ok=True)
-                except OSError:pass
+        uid = user()['id']
+        with db() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row = c.execute('SELECT avatar FROM users WHERE id=?', (uid,)).fetchone()
+            if not row:
+                abort(401, 'Sign in again.')
+            c.execute("UPDATE users SET avatar='' WHERE id=?", (uid,))
+        discard_avatar_file(avatar_directory(uid), row['avatar'])
         return jsonify(ok=True)
 
     @app.get('/profile-images/<uid>/<filename>')
-    def profile_image(uid,filename):
-        if not re.fullmatch(r'[a-f0-9]{32}\.jpg',filename):abort(404)
-        directory=avatar_directory(uid)
-        with db() as c:row=c.execute('SELECT avatar FROM users WHERE id=?',(uid,)).fetchone()
-        if not row or row['avatar']!=filename or not (directory/filename).is_file():abort(404)
-        return send_file(directory/filename,mimetype='image/jpeg',conditional=True)
+    def profile_image(uid, filename):
+        if not AVATAR_FILENAME.fullmatch(filename):
+            abort(404)
+        directory = avatar_directory(uid)
+        with db() as c:
+            row = c.execute('SELECT avatar FROM users WHERE id=?', (uid,)).fetchone()
+        if not row or row['avatar'] != filename:
+            abort(404)
+        try:
+            return send_file(directory / filename, mimetype='image/jpeg', conditional=True)
+        except FileNotFoundError:
+            abort(404)
 
     @app.get('/api/account/likes')
     def liked_creations():
@@ -550,7 +595,7 @@ def install(app,api):
     def studio_dashboard_data():
         own=projects()
         with db() as c:
-            shared={r[0] for r in c.execute("SELECT DISTINCT project_id FROM submissions WHERE user_id=? AND status IN ('submitted','in_review','approved','published')",(user()['id'],))}
+            shared={r[0] for r in c.execute("SELECT DISTINCT project_id FROM submissions WHERE user_id=? AND status IN ('check_pending','submitted','in_review','approved','published')",(user()['id'],))}
         movies=[studio_dashboard.movie_summary(p,project_dir(p['id']),p['id'] in shared) for p in own]
         movies.sort(key=lambda p:p['updated'],reverse=True)
         tasks=background_tasks.project_tasks(user()['id'],g.project_id) if getattr(g,'project_id',None) else []
@@ -642,7 +687,10 @@ def install(app,api):
 
     @app.get('/api/community/mine')
     def mine():
-        with db() as c:rows=c.execute('SELECT * FROM submissions WHERE user_id=? ORDER BY created DESC,rowid DESC',(user()['id'],)).fetchall()
+        project_id=request.args.get('project_id')
+        with db() as c:
+            rows=c.execute('''SELECT * FROM submissions WHERE user_id=? AND (? IS NULL OR project_id=?)
+                              ORDER BY created DESC,rowid DESC''',(user()['id'],project_id,project_id)).fetchall()
         return jsonify(items=[serialize(dict(r),True) for r in rows],policy=policy())
 
     @app.get('/community/media/<sid>')
@@ -671,11 +719,13 @@ def install(app,api):
         sid=uuid.uuid4().hex;path=MEDIA/(sid+'.mp4');context=[]
         try:
             if has_upload:
-                f=upload
-                if Path(f.filename or '').suffix.lower() not in ('.mp4','.mov','.webm'):abort(400,'Upload MP4, MOV or WebM.')
-                blob=f.read(256*1024*1024+1)
-                if len(blob)>256*1024*1024:abort(400,'Use a video under 256 MB.')
-                path.write_bytes(blob)
+                if Path(upload.filename or '').suffix.lower() not in ('.mp4','.mov','.webm'):abort(400,'Upload MP4, MOV or WebM.')
+                total=0
+                with path.open('wb') as output:
+                    for chunk in iter(lambda: upload.read(1024*1024),b''):
+                        total+=len(chunk)
+                        if total>video_tools.MAX_VIDEO_BYTES:abort(400,'Use a video under 256 MB.')
+                        output.write(chunk)
             elif v.get('job_id'):
                 src=api['local_clip'](str(v['job_id']));shutil.copyfile(src,path)
             elif v.get('assembly_id'):
@@ -692,17 +742,25 @@ def install(app,api):
             # Normalize non-MP4 uploads without changing the source file.
             if has_upload:
                 raw=path.with_suffix('.source');path.replace(raw)
-                try:video_tools.run(['-i',raw,'-map','0:v:0','-map','0:a:0?','-c:v','libx264','-preset','fast','-crf','20','-pix_fmt','yuv420p','-c:a','aac','-movflags','+faststart',path],timeout=180)
+                try:video_tools.run(['-xerror','-i',raw,'-map','0:v:0','-map','0:a:0?','-c:v','libx264','-preset','fast','-crf','20','-pix_fmt','yuv420p','-c:a','aac','-movflags','+faststart',path],timeout=180)
                 finally:raw.unlink(missing_ok=True)
                 info=video_tools.probe(path)
-            digest=hashlib.sha256(path.read_bytes()).hexdigest()
-            meta={**info,'source_job':v.get('job_id'),'source_assembly':v.get('assembly_id'),'context':context,'technical_precheck':'Playable video and duration checked. Content moderation requires staff review.'}
+            else:
+                video_tools.run(['-xerror','-i',path,'-map','0:v:0','-map','0:a:0?','-t','1','-f','null','-'],timeout=30)
+            digest=discover_review.video_digest(path)
+            meta={**info,'source_job':v.get('job_id'),'source_assembly':v.get('assembly_id'),'context':context,'technical_precheck':'Video format, duration and playback checked.'}
+            selected_mode=discover_review.mode()
+            rules=publication_policy(selected_mode)
             with db() as c:
+                c.execute('BEGIN IMMEDIATE')
+                if not c.execute('SELECT 1 FROM projects WHERE id=? AND user_id=?',(g.project_id,user()['id'])).fetchone():
+                    abort(409,'The project is no longer available. Refresh before submitting.')
                 c.execute('INSERT INTO submissions(id,user_id,project_id,title,description,tags,kind,status,path,digest,metadata,created,reviewer_id,policy,decision_note,checks,parent_id,publish,review_notes,public_caption) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                    (sid,user()['id'],g.project_id,title,'',json.dumps(tags),kind,'submitted',path.name,digest,json.dumps(meta),store.now(),None,json.dumps(policy()),'',None,parent,0,notes,caption))
+                    (sid,user()['id'],g.project_id,title,'',json.dumps(tags),kind,'submitted',path.name,digest,json.dumps(meta),store.now(),None,json.dumps(rules),'',None,parent,0,notes,caption))
                 c.execute("UPDATE projects SET name=? WHERE id=? AND user_id=? AND name='Untitled movie'",(title,g.project_id,user()['id']))
-                event(c,sid,'submitted','Creator requested review and confirmed sharing permission.',{'project_id':g.project_id})
-                notifications.review_available(c,sid,user()['id'],bool(parent))
+                event(c,sid,'submitted','Creator submitted a version for Discover and confirmed sharing permission.',{'project_id':g.project_id})
+                if not discover_review.enqueue(c,sid,selected_mode):
+                    notifications.review_available(c,sid,user()['id'],bool(parent))
         except Exception:
             path.unlink(missing_ok=True)
             for item in context:(MEDIA/item['file']).unlink(missing_ok=True)
@@ -725,10 +783,15 @@ def install(app,api):
 
     @app.post('/api/community/<sid>/report')
     def report(sid):
-        if not visible(submission(sid)):abort(404)
         reason=str(payload().get('reason','')).strip()
         if not 5<=len(reason)<=1000:abort(400,'Describe the concern in 5–1,000 characters.')
-        with db() as c:c.execute('INSERT INTO reports(user_id,submission_id,reason,created) VALUES(?,?,?,?) ON CONFLICT(user_id,submission_id) DO UPDATE SET reason=excluded.reason,status=\'open\'',(user()['id'],sid,reason,store.now()))
+        with db() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row=c.execute('SELECT status,publish FROM submissions WHERE id=?',(sid,)).fetchone()
+            if not row or not visible(row):abort(404)
+            c.execute("""INSERT INTO reports(user_id,submission_id,reason,created) VALUES(?,?,?,?)
+                         ON CONFLICT(user_id,submission_id) DO UPDATE SET reason=excluded.reason,
+                         created=excluded.created,status='open'""",(user()['id'],sid,reason,store.now()))
         return jsonify(ok=True)
 
     @app.post('/api/community/<sid>/publish')
@@ -739,13 +802,13 @@ def install(app,api):
             row=dict(found)
             if row['user_id']!=user()['id']:abort(403,'Only the creator can publish this creation. Staff approval returns it to the creator.')
             if visible(row):return jsonify(ok=True,item=serialize(row,True))
-            if row['status']!='approved':abort(409,'This version needs staff approval before you can publish it.')
+            if row['status']!='approved':abort(409,'Wait until this version is ready to publish.')
             checks=json.loads(row['checks'] or '{}')
-            if any(checks.get(x['id']) is not True for x in json.loads(row['policy'])['criteria']):abort(409,'The approval checklist is incomplete.')
+            if not discover_review.is_auto_approved(c,row) and any(checks.get(x['id']) is not True for x in json.loads(row['policy'])['criteria']):abort(409,'The approval checklist is incomplete.')
             path=MEDIA/row['path']
-            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest()!=row['digest']:abort(409,'The approved video changed. Submit a new version for review.')
+            if not path.is_file() or discover_review.video_digest(path)!=row['digest']:abort(409,'The approved video changed. Submit a new version for review.')
             values=request.get_json(silent=True) or {}
-            if 'public_caption' in values and values['public_caption']!=row['public_caption']:abort(409,'Caption changes need a new submission so staff can review the public details.')
+            if 'public_caption' in values and values['public_caption']!=row['public_caption']:abort(409,'Submit a new version to check the revised caption.')
             c.execute("UPDATE submissions SET status='published',publish=1,published_at=?,published_by=? WHERE id=?",(store.now(),user()['id'],sid))
             # Retire earlier published versions only when their creator publishes the replacement.
             parent=row['parent_id'];visited=set()
@@ -760,6 +823,8 @@ def install(app,api):
     def revise_public_caption(sid):
         v=payload();caption=str(v.get('public_caption','')).strip()
         if len(caption)>2000:abort(400,'Use a public caption up to 2,000 characters.')
+        selected_mode=discover_review.mode()
+        rules=publication_policy(selected_mode)
         with db() as c:
             c.execute('BEGIN IMMEDIATE');found=c.execute('SELECT * FROM submissions WHERE id=?',(sid,)).fetchone()
             if not found:abort(404)
@@ -768,16 +833,17 @@ def install(app,api):
             if row['status'] not in ('approved','published','changes_requested','rejected'):abort(409,'Open an approved or published creation to revise its caption.')
             if caption==row['public_caption']:abort(400,'Change the caption before requesting a new review.')
             path=MEDIA/row['path']
-            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest()!=row['digest']:abort(409,'The video changed. Submit a new video for review.')
-            pending=c.execute("SELECT id FROM submissions WHERE user_id=? AND parent_id=? AND public_caption=? AND status IN ('submitted','in_review')",(user()['id'],sid,caption)).fetchone()
+            if not path.is_file() or discover_review.video_digest(path)!=row['digest']:abort(409,'The video changed. Submit a new video for review.')
+            pending=c.execute("SELECT id FROM submissions WHERE user_id=? AND parent_id=? AND public_caption=? AND status IN ('check_pending','submitted','in_review','approved')",(user()['id'],sid,caption)).fetchone()
             if pending:new_id=pending['id']
             else:
                 new_id=uuid.uuid4().hex
                 # The media is immutable; caption revisions reuse it and retain the original post until publication.
                 c.execute('INSERT INTO submissions(id,user_id,project_id,title,description,tags,kind,status,path,digest,metadata,created,reviewer_id,policy,decision_note,checks,parent_id,publish,review_notes,public_caption) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                          (new_id,row['user_id'],row['project_id'],row['title'],'',row['tags'],row['kind'],'submitted',row['path'],row['digest'],row['metadata'],store.now(),None,json.dumps(policy()),'',None,sid,0,row['review_notes'],caption))
+                          (new_id,row['user_id'],row['project_id'],row['title'],'',row['tags'],row['kind'],'submitted',row['path'],row['digest'],row['metadata'],store.now(),None,json.dumps(rules),'',None,sid,0,row['review_notes'],caption))
                 event(c,new_id,'submitted','Creator revised the public caption and requested review.',{'parent_id':sid,'project_id':row['project_id']})
-                notifications.review_available(c,new_id,user()['id'],True)
+                if not discover_review.enqueue(c,new_id,selected_mode):
+                    notifications.review_available(c,new_id,user()['id'],True)
         return jsonify(ok=True,item=serialize(submission(new_id),True))
 
     @app.post('/api/community/<sid>/unpublish')
@@ -796,6 +862,7 @@ def install(app,api):
         if row['user_id']!=user()['id']:abort(403)
         with db() as c:
             c.execute("UPDATE submissions SET publish=0,status='withdrawn' WHERE id=?",(sid,));event(c,sid,'withdrawn')
+            discover_review.cancel(c,sid)
             notifications.clear_review(c,sid)
         return jsonify(ok=True)
 
@@ -803,13 +870,60 @@ def install(app,api):
     def queue():
         required_staff()
         with db() as c:
-            rows=c.execute("SELECT * FROM submissions ORDER BY created DESC,rowid DESC LIMIT 200").fetchall()
+            rows=c.execute('''
+                SELECT s.* FROM submissions s LEFT JOIN discover_checks m ON m.submission_id=s.id
+                ORDER BY CASE WHEN s.status IN ('submitted','in_review') THEN 0 ELSE 1 END,
+                         CASE WHEN s.status='submitted' AND m.verdict='flagged' THEN 0 ELSE 1 END,
+                         CASE WHEN s.status IN ('submitted','in_review') THEN s.created END,
+                         s.created DESC,s.rowid DESC LIMIT 200
+            ''').fetchall()
             selected=request.args.get('selected','')
             if selected and selected not in {r['id'] for r in rows}:
                 item=c.execute('SELECT * FROM submissions WHERE id=?',(selected,)).fetchone()
                 if item:rows.append(item)
-            reports=[dict(r) for r in c.execute("SELECT * FROM reports WHERE status='open'")]
-        return jsonify(items=[serialize(dict(r),True) for r in rows],reports=reports,policy=policy(),user_id=user()['id'])
+            reports=[dict(r) for r in c.execute('''
+                SELECT r.id,r.submission_id,r.reason,r.created,s.title
+                FROM reports r JOIN submissions s ON s.id=r.submission_id
+                WHERE r.status='open' AND s.status='published' AND s.publish=1
+                ORDER BY r.created,r.id LIMIT 200
+            ''')]
+            spot_checks=[dict(r) for r in c.execute('''
+                SELECT s.id,s.title FROM discover_checks m JOIN submissions s ON s.id=m.submission_id
+                WHERE m.spot_check=1 AND m.audited_at IS NULL AND s.status='published' AND s.publish=1
+                ORDER BY s.published_at,s.id LIMIT 100
+            ''')]
+            stats=discover_review.metrics(c)
+        return jsonify(items=[serialize(dict(r),True) for r in rows],reports=reports,spot_checks=spot_checks,
+                       screening_stats=stats,review_mode=discover_review.mode(),policy=policy(),user_id=user()['id'])
+
+    @app.post('/api/review/<sid>/keep-published')
+    def keep_published(sid):
+        required_staff()
+        value=payload()
+        shown=value.get('reports',[])
+        note=str(value.get('note','')).strip()[:3000]
+        if not isinstance(shown,list) or len(shown)>200 or any(
+            not isinstance(r,dict) or not isinstance(r.get('id'),int) or not isinstance(r.get('reason'),str)
+            or not isinstance(r.get('created'),str) for r in shown
+        ):abort(400,'Refresh the reports and try again.')
+        if shown and not note:abort(400,'Add a reason for closing the reports.')
+        with db() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row=c.execute('SELECT * FROM submissions WHERE id=?',(sid,)).fetchone()
+            if not row or not visible(row):abort(404,'Published creation not found.')
+            if row['user_id']==user()['id']:abort(403,'Another reviewer must review your own creation.')
+            resolved=0
+            for report in shown:
+                resolved+=c.execute('''UPDATE reports SET status='resolved'
+                    WHERE submission_id=? AND id=? AND reason=? AND created=? AND status='open'
+                ''',(sid,report['id'],report['reason'],report['created'])).rowcount
+            audited=c.execute('''UPDATE discover_checks SET audited_at=?
+                WHERE submission_id=? AND spot_check=1 AND audited_at IS NULL
+            ''',(store.now(),sid)).rowcount
+            if not resolved and not audited:abort(409,'The review queue changed. Refresh and check the latest reports.')
+            event(c,sid,'kept_published',note or 'Staff completed a publication spot check.',
+                  {'reports_resolved':resolved,'spot_check_completed':bool(audited)})
+        return jsonify(ok=True)
 
     @app.get('/api/review/<sid>/context/<int:index>')
     def context_video(sid,index):
@@ -848,11 +962,16 @@ def install(app,api):
             if action=='approved':
                 p=json.loads(row['policy'])
                 if not isinstance(checks,dict) or any(checks.get(x['id']) is not True for x in p['criteria']):abort(400,'Complete all review checks before approval.')
-                if hashlib.sha256((MEDIA/row['path']).read_bytes()).hexdigest()!=row['digest']:abort(409,'The review file changed. Submit a new version.')
+                path=MEDIA/row['path']
+                if not path.is_file() or discover_review.video_digest(path)!=row['digest']:abort(409,'The review file changed. Submit a new version.')
                 if v.get('acknowledge_draft') is not True:abort(400,'Acknowledge that these are provisional rules.')
             elif not note:abort(400,'Explain the decision so the creator knows what to change.')
             c.execute('UPDATE submissions SET status=?,publish=0,decision_note=?,checks=? WHERE id=?',(action,note,json.dumps(checks),sid))
-            if action=='taken_down':c.execute("UPDATE reports SET status='resolved' WHERE submission_id=?",(sid,))
+            if action=='taken_down':
+                c.execute("UPDATE reports SET status='resolved' WHERE submission_id=?",(sid,))
+                c.execute("UPDATE discover_checks SET audited_at=? WHERE submission_id=? AND spot_check=1",(store.now(),sid))
+            if action in ('taken_down','rejected'):
+                discover_review.reopen_related_clearances(c,row)
             event(c,sid,action,note or ('Approved and returned to creator; awaiting their Publish action.' if action=='approved' else ''),{'checks':checks,'policy_version':json.loads(row['policy'])['version'],'creator_id':row['user_id']})
             notifications.clear_review(c,sid)
             titles={'approved':'Approved — your creation is ready to publish.','changes_requested':'Your creation has feedback to review.','rejected':'A review decision is available.','taken_down':'Your creation was removed from publication.'}

@@ -8,3 +8,5 @@ imageio-ffmpeg>=0.6,<1
 pypdf>=6,<7
 defusedxml>=0.7,<1
 gunicorn>=23,<26
+alibabacloud-green20220302>=3.6.8,<4
+oss2>=2.19,<3
