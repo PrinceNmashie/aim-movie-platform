@@ -112,8 +112,13 @@
 }
 .staff-refresh:hover { border-color: var(--review-line); color: var(--text); }
 
-.staff-queue-tabs { display: grid; margin: 6px 0 12px; border-bottom: 1px solid var(--review-line); }
-.staff-queue-tabs > div { display: flex; gap: 3px; flex-wrap: wrap; align-items: center; }
+.staff-queue-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin: 6px 0 12px;
+  border-bottom: 1px solid var(--review-line);
+}
 .staff-queue-tabs button {
   display: inline-flex;
   align-items: center;
@@ -222,13 +227,6 @@
   color: var(--review-muted);
 }
 .staff-queue-flag { color: #f0b08f; }
-.staff-queue-stats { border-top: 1px solid var(--review-line); margin-top: 12px; padding-top: 9px; }
-.staff-queue-stats summary { color: var(--review-muted); font-size: 11px; cursor: pointer; }
-.staff-mode-dot { display: inline-block; margin: 0 6px 1px 2px; width: 6px; height: 6px; border-radius: 50%; background: var(--review-gold); }
-.staff-queue-stats dl { margin: 7px 0 0; font-size: 11px; }
-.staff-queue-stats dl div { display: flex; justify-content: space-between; gap: 12px; margin-top: 4px; }
-.staff-queue-stats dt { color: var(--review-muted); }
-.staff-queue-stats dd { margin: 0; }
 
 .staff-preview { padding: 14px; }
 .staff-preview-head { margin-bottom: 12px; }

@@ -870,16 +870,17 @@ def install(app,api):
     def queue():
         required_staff()
         with db() as c:
+            c.execute('BEGIN')
             rows=c.execute('''
                 SELECT s.* FROM submissions s LEFT JOIN discover_checks m ON m.submission_id=s.id
-                ORDER BY CASE WHEN s.status IN ('submitted','in_review') THEN 0 ELSE 1 END,
-                         CASE WHEN s.status='submitted' AND m.verdict='flagged' THEN 0 ELSE 1 END,
-                         CASE WHEN s.status IN ('submitted','in_review') THEN s.created END,
-                         s.created DESC,s.rowid DESC LIMIT 200
+                WHERE s.status IN ('submitted','in_review')
+                ORDER BY CASE WHEN s.status='submitted' AND m.verdict='flagged' THEN 0 ELSE 1 END,
+                         s.created,s.rowid LIMIT 200
             ''').fetchall()
             selected=request.args.get('selected','')
             if selected and selected not in {r['id'] for r in rows}:
-                item=c.execute('SELECT * FROM submissions WHERE id=?',(selected,)).fetchone()
+                item=c.execute("SELECT * FROM submissions WHERE id=? AND status IN ('submitted','in_review')",
+                               (selected,)).fetchone()
                 if item:rows.append(item)
             reports=[dict(r) for r in c.execute('''
                 SELECT r.id,r.submission_id,r.reason,r.created,s.title
@@ -887,14 +888,11 @@ def install(app,api):
                 WHERE r.status='open' AND s.status='published' AND s.publish=1
                 ORDER BY r.created,r.id LIMIT 200
             ''')]
-            spot_checks=[dict(r) for r in c.execute('''
-                SELECT s.id,s.title FROM discover_checks m JOIN submissions s ON s.id=m.submission_id
-                WHERE m.spot_check=1 AND m.audited_at IS NULL AND s.status='published' AND s.publish=1
-                ORDER BY s.published_at,s.id LIMIT 100
-            ''')]
-            stats=discover_review.metrics(c)
-        return jsonify(items=[serialize(dict(r),True) for r in rows],reports=reports,spot_checks=spot_checks,
-                       screening_stats=stats,review_mode=discover_review.mode(),policy=policy(),user_id=user()['id'])
+            reported_ids=list(dict.fromkeys(r['submission_id'] for r in reports))
+            if reported_ids:
+                marks=','.join('?' for _ in reported_ids)
+                rows.extend(c.execute(f'SELECT * FROM submissions WHERE id IN ({marks})',reported_ids))
+        return jsonify(items=[serialize(dict(r),True) for r in rows],reports=reports,policy=policy(),user_id=user()['id'])
 
     @app.post('/api/review/<sid>/keep-published')
     def keep_published(sid):

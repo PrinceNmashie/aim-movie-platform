@@ -4,11 +4,7 @@ const AIMStaffReview = (() => {
   const tabs = [
     ['submitted', 'Needs review', 'The queue is clear. New submissions will appear here.'],
     ['in_review', 'In review', 'There are no claimed submissions in this view.'],
-    ['approved', 'Approved', 'Approved submissions waiting for their creator appear here.'],
-    ['published', 'Published', 'Published submissions will appear here.'],
     ['reported', 'Reported', 'There are no open viewer reports.'],
-    ['spot', 'Spot checks', 'There are no spot checks waiting for staff.'],
-    ['all', 'All', 'Creators can send videos for review from their studio.'],
   ];
   const statusLabels = {
     submitted: 'Needs review', in_review: 'In review', check_pending: 'Check pending',
@@ -28,7 +24,7 @@ const AIMStaffReview = (() => {
   const relativeDate = new Intl.RelativeTimeFormat(undefined, {style: 'short'});
   let selectedId = new URLSearchParams(location.search).get('submission');
   let tab, assignment = 'all', queue, thumbnails, loadVersion = 0, dirty = false;
-  let byId = new Map(), byReport = new Map(), bySpot = new Map();
+  let byId = new Map(), byReport = new Map();
 
   function status(item) {
     return `<span class="staff-status" data-status="${pe(item.status)}">${pe(statusLabels[item.status] || AIMPublication.status(item))}</span>`;
@@ -48,18 +44,15 @@ const AIMStaffReview = (() => {
   }
 
   function group(key) {
-    if (key === 'all') return queue.items;
     if (key === 'reported') {
-      return Array.from(byReport, ([id, entries]) => byId.get(id) || {id, title: entries[0].title});
+      return Array.from(byReport.keys(), id => byId.get(id)).filter(Boolean);
     }
-    if (key === 'spot') return queue.spot_checks.map(item => byId.get(item.id) || item);
     return queue.items.filter(item => item.status === key);
   }
 
   function itemTab(item) {
     if (item.status === 'published' && byReport.has(item.id)) return 'reported';
-    if (item.status === 'published' && bySpot.has(item.id)) return 'spot';
-    return tabs.some(([key]) => key === item.status) ? item.status : 'all';
+    if (item.status === 'submitted' || item.status === 'in_review') return item.status;
   }
 
   function listedItems() {
@@ -117,19 +110,17 @@ const AIMStaffReview = (() => {
       </span>
       <span class="staff-queue-foot">
         ${tab === 'reported' ? `<span>${count} ${count === 1 ? 'report' : 'reports'}</span>` :
-          tab === 'spot' ? '<span>Spot check</span>' : item.screening?.verdict === 'flagged' ?
-          '<span class="staff-queue-flag">Policy flag</span>' : tab === 'all' && item.status ? status(item) : '<span></span>'}
+          item.screening?.verdict === 'flagged' ? '<span class="staff-queue-flag">Policy flag</span>' : '<span></span>'}
         ${item.created ? `<time datetime="${pe(item.created)}" title="${pe(submittedAt(item.created))}">${pe(age(item.created))}</time>` : ''}
       </span>
     </button>`;
   }
 
   function queueMarkup(items) {
-    const stats = queue.screening_stats;
     const tabButton = ([key, label]) => {
       const count = group(key).length;
       return `<button type="button" data-act="review-tab" data-tab="${key}" aria-pressed="${tab === key}">
-        ${label}${count && ['submitted', 'in_review', 'reported', 'spot'].includes(key) ? `<span>${count}</span>` : ''}
+        ${label}${count ? `<span>${count}</span>` : ''}
       </button>`;
     };
     return `<aside class="staff-panel staff-review-queue" aria-labelledby="staff-queue-title">
@@ -138,8 +129,7 @@ const AIMStaffReview = (() => {
         <button type="button" class="staff-refresh" data-act="review-refresh" aria-label="Refresh review queue" title="Refresh review queue">↻</button>
       </div>
       <nav class="staff-queue-tabs" aria-label="Review queue filters">
-        <div>${tabs.slice(0, 2).map(tabButton).join('')}</div>
-        <div>${tabs.slice(2).filter(([key]) => key !== 'spot' || bySpot.size || tab === 'spot').map(tabButton).join('')}</div>
+        ${tabs.map(tabButton).join('')}
       </nav>
       ${tab === 'in_review' ? `<select id="staff-review-assignment" aria-label="Filter by reviewer">
         ${[['all', 'All reviewers'], ['mine', 'Assigned to me'], ['others', 'Assigned to others']]
@@ -147,15 +137,6 @@ const AIMStaffReview = (() => {
       </select>` : ''}
       <div class="staff-queue-list" aria-label="Submissions">${items.map(queueCard).join('') ||
         `<p class="staff-muted staff-queue-empty">${pe(tabs.find(([key]) => key === tab)[2])}</p>`}</div>
-      ${stats && queue.review_mode !== 'manual' ? `<details class="staff-queue-stats">
-        <summary><span class="staff-mode-dot" aria-hidden="true"></span>${queue.review_mode === 'pilot' ? 'Pilot mode' : 'Automatic mode'}</summary>
-        <dl>
-          <div><dt>Checks pending</dt><dd>${pe(stats.pending)}</dd></div>
-          <div><dt>Automatically cleared</dt><dd>${pe(stats.cleared)}</dd></div>
-          <div><dt>Pilot checks with no flags</dt><dd>${pe(stats.pilot_clear)}</dd></div>
-          <div><dt>Clear pilot checks that staff sent back or rejected</dt><dd>${pe(stats.pilot_staff_concern)}</dd></div>
-        </dl>
-      </details>` : ''}
     </aside>`;
   }
 
@@ -274,8 +255,6 @@ const AIMStaffReview = (() => {
   }
 
   function decision(item, assigned, own) {
-    const reports = byReport.get(item.id) || [];
-    const spot = bySpot.has(item.id);
     if (assigned) {
       return `<section class="staff-panel staff-decision">
         <h2>Decision</h2>
@@ -299,28 +278,19 @@ const AIMStaffReview = (() => {
         <button type="button" class="button primary" data-act="review-claim">Claim for review</button>
       </section>`;
     }
-    if (!['approved', 'published', 'changes_requested', 'rejected', 'taken_down'].includes(item.status)) return '';
-    const descriptions = {
-      approved: 'This version is ready for the creator to preview and publish.',
-      published: 'This version is live on Discover.',
-      changes_requested: 'The creator can send a revised version for review.',
-      rejected: 'This version was rejected.',
-      taken_down: 'Staff removed this version from publication.',
-    };
+    if (item.status !== 'published') return '';
     return `<section class="staff-panel staff-decision">
-      <h2>${item.status === 'published' ? 'Publication review' : 'Decision'}</h2>
-      <p class="staff-muted">${descriptions[item.status]}</p>
-      ${item.decision_note ? `<p class="staff-note preserve-lines">${pe(item.decision_note)}</p>` : ''}
-      ${!own && item.status === 'published' && (reports.length || spot) ? `<form id="keep-published-form" class="portal-form">
-        ${spot ? '<p class="staff-muted">Selected for a publication spot check.</p>' : ''}
-        <label>Review note<textarea name="note" maxlength="3000" ${reports.length ? 'required' : ''}></textarea></label>
-        <button type="submit" class="button secondary">${reports.length ? 'Resolve reports and keep published' : 'Complete spot check'}</button>
-      </form>` : ''}
-      ${!own && ['approved', 'published'].includes(item.status) ? `<details class="staff-decision-note">
-        <summary>${item.status === 'published' ? 'Remove post' : 'Revoke approval'}</summary>
+      <h2>Reported post</h2>
+      <p class="staff-muted">${own ? 'Another staff member can review this report.' : 'This version is live on Discover.'}</p>
+      ${!own ? `<form id="keep-published-form" class="portal-form">
+        <label>Review note<textarea name="note" maxlength="3000" required></textarea></label>
+        <button type="submit" class="button secondary">Resolve reports and keep published</button>
+      </form>
+      <details class="staff-decision-note">
+        <summary>Remove post</summary>
         <form id="takedown-form" class="portal-form">
           <label>Reason<textarea name="note" maxlength="3000" required></textarea></label>
-          <button type="submit" class="button danger">${item.status === 'published' ? 'Remove from Discover' : 'Revoke approval'}</button>
+          <button type="submit" class="button danger">Remove from Discover</button>
         </form>
       </details>` : ''}
     </section>`;
@@ -407,9 +377,7 @@ const AIMStaffReview = (() => {
     if (version !== loadVersion || (quiet && !mayRefresh())) return;
     if (quiet && JSON.stringify(result) === JSON.stringify(queue)) return;
     queue = result;
-    queue.spot_checks ||= [];
     byId = new Map(queue.items.map(item => [item.id, item]));
-    bySpot = new Map(queue.spot_checks.map(item => [item.id, item]));
     byReport = new Map();
     for (const report of queue.reports) {
       if (!byReport.has(report.submission_id)) byReport.set(report.submission_id, []);
@@ -417,7 +385,7 @@ const AIMStaffReview = (() => {
     }
     const item = byId.get(selectedId);
     if (item && (!tab || !group(tab).some(row => row.id === item.id))) tab = itemTab(item);
-    if (!tab) tab = ['submitted', 'in_review', 'reported', 'spot', 'approved', 'published', 'all'].find(key => group(key).length) || 'submitted';
+    if (!tab) tab = tabs.find(([key]) => group(key).length)?.[0] || 'submitted';
     render();
   }
 
